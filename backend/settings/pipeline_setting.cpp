@@ -1,0 +1,58 @@
+#include "pipeline_setting.hpp"
+#include "yaml_utils.hpp"
+
+#include <stdexcept>
+
+namespace backend::setting
+{
+
+InferenceConfig::InferenceConfig(const YAML::Node& config)
+{
+    // 推理后端
+    const auto backend = tools::readConfig<std::string>(config, "type", "");
+    if (backend == "tensorrt")
+    {
+        type = InferBackend::TENSORRT;
+        const auto node = config["tensorrt"];
+        tensorrt.device_id = tools::readConfig<int>(node, "device_id", tensorrt.device_id);
+    }
+    else if (backend == "openvino")
+    {
+        type = InferBackend::OPENVINO;
+        const auto node = config["openvino"];
+        openvino.device = tools::readConfig<std::string>(node, "device", openvino.device);
+    }
+    else
+    {
+        throw std::invalid_argument("推理后端必须是tensorrt或者openvino之一");
+    }
+
+    // 同步或异步
+    const auto value = tools::readConfig<std::string>(config, "mode", "sync");
+    if (value == "sync")
+        mode = InferMode::SYNC;
+    else if (value == "async")
+        mode = InferMode::ASYNC;
+    else
+        throw std::invalid_argument("执行方式必须为同步或异步中的一种");
+
+    // 队列配置
+    input_capacity = tools::readConfig<int>(config, "input_capacity", input_capacity);
+    result_capacity = tools::readConfig<int>(config, "result_capacity", result_capacity);
+    overflow = tools::readConfig<std::string>(config, "overflow", overflow);
+}
+
+PipelineConfig::PipelineConfig(const YAML::Node& config)
+    : model(config["model"]),
+      processing(config["processing"]),
+      inference(config["inference"])
+{
+}
+
+PipelineConfig loadPipelineConfig(const std::string& path)
+{
+    const auto root = YAML::LoadFile(path);
+    return PipelineConfig(root["pipeline"]);
+}
+
+} // namespace backend

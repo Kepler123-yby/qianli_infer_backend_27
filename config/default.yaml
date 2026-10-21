@@ -17,11 +17,9 @@ pipeline:
 
   inference:
     type: tensorrt
-    tensorrt:
-      device_id: 0
-
-  execution:
     mode: async
     input_capacity: 1
     result_capacity: 1
     overflow: drop_oldest
+    tensorrt:
+      device_id: 0

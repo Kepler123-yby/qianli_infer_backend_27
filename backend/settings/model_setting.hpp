@@ -3,7 +3,7 @@
 #include <yaml-cpp/yaml.h>
 #include <string>
 
-namespace backend
+namespace backend::setting
 {
 
 struct ModelConfig

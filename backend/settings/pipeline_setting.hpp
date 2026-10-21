@@ -1,9 +1,9 @@
 #pragma once
 
-#include "model_config.hpp"
-#include "processing_config.hpp"
+#include "model_setting.hpp"
+#include "processing_setting.hpp"
 
-namespace backend
+namespace backend::setting
 {
 
 enum class InferBackend : int
@@ -32,17 +32,12 @@ struct InferenceConfig
         std::string device = "CPU";
     } openvino;
 
-    explicit InferenceConfig(const YAML::Node& config);
-};
-
-struct ExecutionConfig
-{
     InferMode mode = InferMode::SYNC;
     int input_capacity = 1;
     int result_capacity = 1;
     std::string overflow = "drop_oldest";
 
-    explicit ExecutionConfig(const YAML::Node& config);
+    explicit InferenceConfig(const YAML::Node& config);
 };
 
 struct PipelineConfig
@@ -50,7 +45,6 @@ struct PipelineConfig
     ModelConfig model;
     ProcessingConfig processing;
     InferenceConfig inference;
-    ExecutionConfig execution;
 
     // 接收 pipeline 子节点，不接收完整 YAML 文档。
     explicit PipelineConfig(const YAML::Node& config);

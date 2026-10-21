@@ -3,7 +3,7 @@
 #include <opencv2/core.hpp>
 #include <array>
 
-namespace backend
+namespace backend::types
 {
 
 // 目标颜色

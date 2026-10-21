@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../settings/processing_config.hpp"
+#include "../settings/processing_setting.hpp"
 
 namespace backend
 {
@@ -8,10 +8,10 @@ namespace backend
 class Processor
 {
 public:
-    explicit Processor(const ProcessingConfig& config) : processing_config_(config) {}
+    explicit Processor(const setting::ProcessingConfig& config) : processing_config_(config) {}
 
 private:
-    ProcessingConfig processing_config_;
+    setting::ProcessingConfig processing_config_;
 };
 
 } // namespace backend

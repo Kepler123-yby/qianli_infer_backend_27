@@ -1,8 +1,9 @@
 #pragma once
 
 #include <memory>
+#include <future>
 
-#include "settings/model_config.hpp"
+#include "settings/model_setting.hpp"
 #include "types/detection_result.hpp"
 
 namespace backend
@@ -11,16 +12,16 @@ namespace backend
 class YOLOModel
 {
 public:
-    explicit YOLOModel(const ModelConfig& config) : model_config_(config) {}
+    explicit YOLOModel(const setting::ModelConfig& config) : model_config_(config) {}
 
     virtual ~YOLOModel() noexcept;
 
-    virtual YOLOResult infer(cv::Mat& img);
+    virtual types::YOLOResult infer(cv::Mat& img);
 
-    virtual YOLOResult inferAsync(cv::Mat& img);
+    virtual std::future<types::YOLOResult> inferAsync(cv::Mat& img);
 
 protected:
-    ModelConfig model_config_;
+    setting::ModelConfig model_config_;
 };
 
 class Inference
