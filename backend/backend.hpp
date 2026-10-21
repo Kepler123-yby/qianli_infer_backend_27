@@ -4,6 +4,8 @@
 #include <opencv2/opencv.hpp>
 #include <string>
 
+#include "extra_tools/yaml_read.cpp"
+
 namespace backend
 {
 
@@ -89,7 +91,11 @@ protected:
 
 class Inference
 {
+public:
+    
 
+private:
+    std::unique_ptr<YOLOModel> infer_model_;
 };
 
 } // namespace backend
