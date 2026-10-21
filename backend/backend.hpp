@@ -13,7 +13,14 @@ class Detector
 {
 public:
     explicit Detector(const YAML::Node& config);
+    
+    Detector(const Detector&) = delete;
+    Detector& operator=(const Detector&) = delete;
+    Detector(Detector&&) noexcept;
+    Detector &operator=(Detector &&) noexcept;
 
+    ~Detector();
+    
 private:
     setting::PipelineConfig pipelineConfig_;
     std::shared_ptr<processing::Processor> processor_;
