@@ -40,6 +40,7 @@ struct InferenceConfig
     std::string overflow = "drop_oldest";
 
     explicit InferenceConfig(const YAML::Node& config);
+    InferenceConfig() = default;
 };
 
 struct PipelineConfig
