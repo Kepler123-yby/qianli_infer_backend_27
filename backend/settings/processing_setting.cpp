@@ -38,6 +38,9 @@ PreprocessConfig::PreprocessConfig(const YAML::Node& config)
  */
 PostprocessConfig::PostprocessConfig(const YAML::Node& config)
 {
+    // 输出解析方式
+    decoder = tools::readConfig<std::string>(config, "decoder", decoder);
+
     // 后处理使用设备
     const auto implementation = tools::readConfig<std::string>(config, "implementation", "cpu");
     use_cuda = implementation == "cuda";
@@ -55,4 +58,4 @@ ProcessingConfig::ProcessingConfig(const YAML::Node& config)
 {
 }
 
-} // namespace backend
+} // namespace backend::setting

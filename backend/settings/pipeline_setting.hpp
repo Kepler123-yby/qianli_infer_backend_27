@@ -1,6 +1,7 @@
 #pragma once
 
-#include "model_setting.hpp"
+#include <string>
+
 #include "processing_setting.hpp"
 
 namespace backend::setting
@@ -20,6 +21,7 @@ enum class InferMode : int
 
 struct InferenceConfig
 {
+    std::string model_path;
     InferBackend type;
 
     struct TensorRTConfig
@@ -42,14 +44,14 @@ struct InferenceConfig
 
 struct PipelineConfig
 {
-    ModelConfig model;
     ProcessingConfig processing;
     InferenceConfig inference;
 
     // 接收 pipeline 子节点，不接收完整 YAML 文档。
     explicit PipelineConfig(const YAML::Node& config);
+    PipelineConfig() = default;
 };
 
 PipelineConfig loadPipelineConfig(const std::string& path);
 
-} // namespace backend
+} // namespace backend::setting

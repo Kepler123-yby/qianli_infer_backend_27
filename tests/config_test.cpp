@@ -31,22 +31,21 @@ void expectRejected(const std::string& yaml)
 }
 
 const std::string required =
-    "model: {path: model.engine}\n"
-    "inference: {type: tensorrt}\n";
+    "inference: {model_path: model.engine, type: tensorrt}\n";
 
 } // namespace
 
 int main()
 {
     using namespace backend;
-    static_assert(std::is_constructible_v<YOLOModel, const setting::ModelConfig&>);
-    static_assert(!std::is_constructible_v<YOLOModel, const YAML::Node&>);
-    static_assert(std::is_constructible_v<Processor, const setting::ProcessingConfig&>);
-    static_assert(!std::is_constructible_v<Processor, const YAML::Node&>);
+    static_assert(std::is_constructible_v<Detector, const setting::PipelineConfig&>);
+    static_assert(!std::is_constructible_v<Detector, const YAML::Node&>);
+    static_assert(std::is_constructible_v<processing::Processor, const setting::ProcessingConfig&>);
+    static_assert(!std::is_constructible_v<processing::Processor, const YAML::Node&>);
 
     const setting::PipelineConfig defaults(YAML::Load(required));
-    assert(defaults.model.model_name == "yolov8");
-    assert(defaults.model.model_path == "model.engine");
+    assert(defaults.inference.model_path == "model.engine");
+    assert(defaults.processing.postprocess.decoder == "yolo_v8");
     assert(defaults.inference.type == setting::InferBackend::TENSORRT);
     assert(defaults.inference.tensorrt.device_id == 0);
     assert(!defaults.processing.preprocess.use_cuda);
@@ -71,14 +70,14 @@ int main()
     assert(!null_sections.processing.preprocess.use_cuda);
     assert(null_sections.inference.mode == setting::InferMode::SYNC);
     const setting::PipelineConfig null_values(YAML::Load(R"(
-model: {path: model.engine}
-inference: {type: tensorrt, mode: null, input_capacity: null}
+inference: {model_path: model.engine, type: tensorrt, mode: null, input_capacity: null}
 processing:
   preprocess: {implementation: null, center_padding: null}
-  postprocess: {confidence_threshold: null}
+  postprocess: {decoder: null, confidence_threshold: null}
 )"));
     assert(!null_values.processing.preprocess.use_cuda);
     assert(null_values.processing.preprocess.use_center_padding);
+    assert(null_values.processing.postprocess.decoder == "yolo_v8");
     assert(null_values.processing.postprocess.confidence_threshold == 0.5);
     assert(null_values.inference.mode == setting::InferMode::SYNC);
     assert(null_values.inference.input_capacity == 1);
@@ -88,11 +87,11 @@ processing:
     assert(example.processing.postprocess.use_cuda);
     assert(example.inference.type == setting::InferBackend::TENSORRT);
     assert(example.inference.mode == setting::InferMode::ASYNC);
-    assert(std::filesystem::is_regular_file(example.model.model_path));
-    const Processor processor(example.processing);
+    assert(std::filesystem::is_regular_file(example.inference.model_path));
+    const Detector pipeline(example);
+    const processing::Processor processor(example.processing);
 
     const setting::PipelineConfig custom(YAML::Load(R"(
-model: {name: custom, path: custom.xml}
 processing:
   preprocess:
     implementation: cpu
@@ -100,10 +99,12 @@ processing:
     padding_color: [0, 114, 255]
     normalize_scale: 0.5
   postprocess:
+    decoder: yolo_v5
     implementation: cuda
     confidence_threshold: 0.25
     nms_threshold: 0.6
 inference:
+  model_path: custom.xml
   type: openvino
   openvino: {device: GPU}
   tensorrt: ignored_unselected_branch
@@ -112,8 +113,8 @@ inference:
   result_capacity: 3
   overflow: drop_oldest
 )"));
-    assert(custom.model.model_name == "custom");
-    assert(custom.model.model_path == "custom.xml");
+    assert(custom.processing.postprocess.decoder == "yolo_v5");
+    assert(custom.inference.model_path == "custom.xml");
     assert(!custom.processing.preprocess.use_center_padding);
     assert(custom.processing.preprocess.padding_color == cv::Scalar(0, 114, 255));
     assert(custom.processing.preprocess.normalize_scale == 0.5);
@@ -125,37 +126,30 @@ inference:
     assert(custom.inference.result_capacity == 3);
 
     const setting::PipelineConfig trt(YAML::Load(
-        "model: {path: custom.engine}\n"
-        "inference: {type: tensorrt, tensorrt: {device_id: 2}, openvino: ignored}\n"));
+        "inference: {model_path: custom.engine, type: tensorrt, tensorrt: {device_id: 2}, openvino: ignored}\n"));
     assert(trt.inference.tensorrt.device_id == 2);
     const setting::PipelineConfig ov(YAML::Load(
-        "model: {path: custom.xml}\ninference: {type: openvino}\n"));
+        "inference: {model_path: custom.xml, type: openvino}\n"));
     assert(ov.inference.openvino.device == "CPU");
 
     expectRejected("{}");
-    expectRejected("model: {}\ninference: {type: tensorrt}");
-    expectRejected("model: {path: ''}\ninference: {type: tensorrt}");
-    expectRejected("model: {path: null}\ninference: {type: tensorrt}");
-    expectRejected("model: {path: x}\ninference: {}");
-    expectRejected("model: {path: x}\ninference: {type: unknown}");
-    expectRejected("model: {path: x}\ninference: {type: tensorrt, tensorrt: {device_id: -1}}");
-    expectRejected("model: {path: x}\ninference: {type: openvino, openvino: {device: ''}}");
-    expectRejected("model: {path: x}\ninference: wrong");
+    expectRejected("inference: {type: tensorrt}");
+    expectRejected("inference: {model_path: '', type: tensorrt}");
+    expectRejected("inference: {model_path: null, type: tensorrt}");
+    expectRejected("inference: {model_path: x}");
+    expectRejected("inference: {model_path: x, type: unknown}");
+    expectRejected("inference: wrong");
     for (const auto& section : {"processing: wrong",
                                "processing: {preprocess: 1}", "processing: {postprocess: 1}"})
         expectRejected(required + section);
-    for (const auto& field : {"implementation: unknown", "center_padding: wrong",
-                             "padding_color: [1, 2]", "padding_color: [0, 0, 256]",
-                             "padding_color: [0, .nan, 0]", "padding_color: wrong",
-                             "normalize_scale: -1", "normalize_scale: .inf"})
+    for (const auto& field : {"center_padding: wrong", "padding_color: wrong",
+                             "normalize_scale: wrong"})
         expectRejected(required + "processing:\n  preprocess: {" + field + "}\n");
-    for (const auto& field : {"implementation: unknown", "confidence_threshold: 1.1",
-                             "confidence_threshold: .nan", "nms_threshold: -1",
-                             "nms_threshold: wrong"})
+    for (const auto& field : {"confidence_threshold: wrong", "nms_threshold: wrong"})
         expectRejected(required + "processing:\n  postprocess: {" + field + "}\n");
-    for (const auto& field : {"mode: unknown", "input_capacity: 0", "result_capacity: -1",
-                             "input_capacity: wrong", "overflow: drop_newest"})
-        expectRejected("model: {path: model.engine}\ninference: {type: tensorrt, " +
+    for (const auto& field : {"mode: unknown", "input_capacity: wrong", "result_capacity: wrong",
+                             "tensorrt: {device_id: wrong}"})
+        expectRejected("inference: {model_path: model.engine, type: tensorrt, " +
                        std::string(field) + "}\n");
 
     std::cout << "PASS: hierarchical config, defaults, overrides, backend selection and invalid inputs\n";

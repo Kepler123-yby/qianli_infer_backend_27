@@ -1,35 +1,23 @@
 #pragma once
 
-#include <memory>
-#include <future>
+#include "processing/processor.hpp"
+#include "inference/inference.hpp"
+#include "settings/pipeline_setting.hpp"
 
-#include "settings/model_setting.hpp"
-#include "types/detection_result.hpp"
+#include <memory>
 
 namespace backend
 {
 
-class YOLOModel
+class Detector
 {
 public:
-    explicit YOLOModel(const setting::ModelConfig& config) : model_config_(config) {}
-
-    virtual ~YOLOModel() noexcept;
-
-    virtual types::YOLOResult infer(cv::Mat& img);
-
-    virtual std::future<types::YOLOResult> inferAsync(cv::Mat& img);
-
-protected:
-    setting::ModelConfig model_config_;
-};
-
-class Inference
-{
-public:
+    explicit Detector(const YAML::Node& config);
 
 private:
-    std::unique_ptr<YOLOModel> infer_model_;
+    setting::PipelineConfig pipelineConfig_;
+    std::shared_ptr<processing::Processor> processor_;
+    std::shared_ptr<inference::Inference> inference_;
 };
 
 } // namespace backend

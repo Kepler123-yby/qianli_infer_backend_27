@@ -8,6 +8,9 @@ namespace backend::setting
 
 InferenceConfig::InferenceConfig(const YAML::Node& config)
 {
+    // 模型路径
+    model_path = tools::readConfig<std::string>(config, "model_path", model_path);
+
     // 推理后端
     const auto backend = tools::readConfig<std::string>(config, "type", "");
     if (backend == "tensorrt")
@@ -43,8 +46,7 @@ InferenceConfig::InferenceConfig(const YAML::Node& config)
 }
 
 PipelineConfig::PipelineConfig(const YAML::Node& config)
-    : model(config["model"]),
-      processing(config["processing"]),
+    : processing(config["processing"]),
       inference(config["inference"])
 {
 }
@@ -55,4 +57,4 @@ PipelineConfig loadPipelineConfig(const std::string& path)
     return PipelineConfig(root["pipeline"]);
 }
 
-} // namespace backend
+} // namespace backend::setting

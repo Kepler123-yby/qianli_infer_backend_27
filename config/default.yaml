@@ -1,8 +1,4 @@
 pipeline:
-  model:
-    name: yolov8
-    path: models/onnx/Infantry-v8n-fp16-20260726-D1.8w-B16.engine
-
   processing:
     preprocess:
       implementation: cuda
@@ -11,11 +7,13 @@ pipeline:
       normalize_scale: 0.00392156862745098
 
     postprocess:
+      decoder: yolo_v8
       implementation: cuda
       confidence_threshold: 0.5
       nms_threshold: 0.45
 
   inference:
+    model_path: models/onnx/Infantry-v8n-fp16-20260726-D1.8w-B16.engine
     type: tensorrt
     mode: async
     input_capacity: 1

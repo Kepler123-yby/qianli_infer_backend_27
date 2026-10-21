@@ -2,13 +2,14 @@
 
 #include "../settings/processing_setting.hpp"
 
-namespace backend
+namespace backend::processing
 {
 
 class Processor
 {
 public:
-    explicit Processor(const setting::ProcessingConfig& config) : processing_config_(config) {}
+    explicit Processor(const setting::ProcessingConfig& config);
+    Processor() = default;
 
 private:
     setting::ProcessingConfig processing_config_;
