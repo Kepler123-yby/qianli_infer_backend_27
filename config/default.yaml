@@ -13,7 +13,7 @@ pipeline:
       nms_threshold: 0.45
 
   inference:
-    model_path: models/onnx/Infantry-v8n-fp16-20260726-D1.8w-B16.engine
+    model_path: assets/armor_v8n_fp16.engine
     type: tensorrt
     mode: async
     input_capacity: 1
