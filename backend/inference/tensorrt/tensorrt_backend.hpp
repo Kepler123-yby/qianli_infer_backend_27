@@ -16,6 +16,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/core/cuda.hpp>
 
+#include "backend.hpp"
 #include "settings/pipeline_setting.hpp"
 
 namespace backend::inference
@@ -159,24 +160,24 @@ private:
     bool close_{false};
 };
 
-class TensorRT
+class TensorRT : public Backend
 {
 public:
     // 构造时将调用线程的当前CUDA设备设置为config.tensorrt.device_id。
     explicit TensorRT(const setting::InferenceConfig& config);
-    ~TensorRT();
+    ~TensorRT() override;
 
     // 两种接口均要求预处理后的连续、单通道FP32 NCHW数据，输出为CPU上的FP32数组。
     // GpuMat必须在配置的设备上，且提交前生产流已完成；本类不执行预处理。
     // 同步接口借用输入并等待完成，调用期间不得从其他线程修改输入。
-    std::vector<float> infer(const cv::Mat& input);
-    std::vector<float> infer(const cv::cuda::GpuMat& input);
+    std::vector<float> infer(const cv::Mat& input) override;
+    std::vector<float> infer(const cv::cuda::GpuMat& input) override;
 
     // 返回前完成深拷贝，之后调用方可复用输入；队列满时提交仍会阻塞。
     // 提交阶段错误直接抛出，执行阶段错误由future.get()抛出。
     // 接口选择决定同步/异步行为，不读取config.mode；析构会等待已入队任务完成。
-    std::future<std::vector<float>> inferAsync(const cv::Mat& input);
-    std::future<std::vector<float>> inferAsync(const cv::cuda::GpuMat& input);
+    std::future<std::vector<float>> inferAsync(const cv::Mat& input) override;
+    std::future<std::vector<float>> inferAsync(const cv::cuda::GpuMat& input) override;
 
     TensorRT(const TensorRT&) = delete;
     TensorRT& operator=(const TensorRT&) = delete;

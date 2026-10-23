@@ -13,29 +13,30 @@
 #include <thread>
 #include <vector>
 
+#include "backend.hpp"
 #include "settings/pipeline_setting.hpp"
 
 namespace backend::inference
 {
 
-class OpenVINO
+class OpenVINO : public Backend
 {
 public:
     explicit OpenVINO(const setting::InferenceConfig& config);
-    ~OpenVINO();
+    ~OpenVINO() override;
 
     OpenVINO(const OpenVINO&) = delete;
     OpenVINO& operator=(const OpenVINO&) = delete;
 
     // 输入为连续、单通道FP32 NCHW数据；布局由预处理保证，输出为CPU上的FP32数组。
     // 同步接口借用Mat数据，调用返回前不得从其他线程修改或释放底层内存。
-    std::vector<float> infer(const cv::Mat& input);
-    std::vector<float> infer(const cv::cuda::GpuMat& input);
+    std::vector<float> infer(const cv::Mat& input) override;
+    std::vector<float> infer(const cv::cuda::GpuMat& input) override;
 
     // 返回前完成输入深拷贝；队列满时提交会等待，不保证提交过程完全不阻塞。
     // 提交错误直接抛出，执行错误由future.get()抛出；不读取config.mode。
-    std::future<std::vector<float>> inferAsync(const cv::Mat& input);
-    std::future<std::vector<float>> inferAsync(const cv::cuda::GpuMat& input);
+    std::future<std::vector<float>> inferAsync(const cv::Mat& input) override;
+    std::future<std::vector<float>> inferAsync(const cv::cuda::GpuMat& input) override;
 
     // GpuMat重载先同步下载到CPU，不是CUDA与OpenVINO设备之间的零拷贝。
     // 调用线程须处于GpuMat所在CUDA设备，且提交前生产流已完成。

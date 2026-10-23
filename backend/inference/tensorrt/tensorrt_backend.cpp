@@ -14,6 +14,12 @@
 namespace backend::inference
 {
 
+/**
+ * @brief 检查CUDA调用结果，失败时抛出带调用名和错误串的异常
+ *
+ * @param status CUDA运行时返回的状态码
+ * @param call 被检查的CUDA调用文本，由CUDA_CHECK自动填入
+ */
 void checkCuda(cudaError_t status, const char* call)
 {
     if (status != cudaSuccess)
@@ -24,6 +30,7 @@ void checkCuda(cudaError_t status, const char* call)
 
 void Logger::log(Severity severity, const char* msg) noexcept
 {
+    // 只输出警告及以上级别，避免TensorRT的INFO把每次推理的日志刷满。
     if (severity <= Severity::kWARNING)
     {
         std::cout << "[TRT]: " << msg << std::endl;
@@ -32,6 +39,7 @@ void Logger::log(Severity severity, const char* msg) noexcept
 
 void IOInfo::InspectEngine(const nvinfer1::ICudaEngine& engine)
 {
+    // 本后端按单输入单输出实现，多张量网络在构造阶段就拒绝。
     if (engine.getNbIOTensors() != 2)
         throw std::runtime_error("当前仅支持单输入单输出的Engine！");
 
@@ -49,6 +57,7 @@ void IOInfo::InspectEngine(const nvinfer1::ICudaEngine& engine)
 
         const size_t elements = calculateElements(engine.getTensorShape(name));
         const size_t bytes = calculateBytes(elements, engine.getTensorDataType(name));
+
         if (engine.getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT)
         {
             input = name;
@@ -65,10 +74,13 @@ void IOInfo::InspectEngine(const nvinfer1::ICudaEngine& engine)
 
     if (input.empty() || output.empty())
         throw std::runtime_error("Engine 必须包含一个输入和一个输出！");
+
+    // 这里只记录FP16张量的元信息；执行路径目前只支持FP32，WorkerPool构造时会再检查。
 }
 
 size_t IOInfo::calculateElements(const nvinfer1::Dims& shape)
 {
+    // nbDims小于0表示维度信息无效，不是动态形状。
     if (shape.nbDims < 0)
         throw std::runtime_error("张量维度无效！");
 
@@ -85,6 +97,7 @@ size_t IOInfo::calculateElements(const nvinfer1::Dims& shape)
 
 size_t IOInfo::calculateBytes(const size_t elements, const nvinfer1::DataType type)
 {
+    // 字节数按张量实际类型计算，与engine是否启用FP16精度无关。
     switch (type)
     {
     case nvinfer1::DataType::kFLOAT:
@@ -98,6 +111,7 @@ size_t IOInfo::calculateBytes(const size_t elements, const nvinfer1::DataType ty
 
 Channel::Channel(nvinfer1::ICudaEngine& engine, const IOInfo& info)
 {
+    // 每个channel独立持有context，才能让多个worker真正并行执行。
     context.reset(engine.createExecutionContext());
     if (!context) throw std::runtime_error("context创建失败！");
 
@@ -137,6 +151,7 @@ void Channel::release() noexcept
     if (stream) cudaStreamSynchronize(stream);
     context.reset();
 
+    // 析构中和构造失败路径都会调用release，因此每个句柄都要判空。
     if (d_in) cudaFree(d_in);
     if (d_out) cudaFree(d_out);
     if (h_in) cudaFreeHost(h_in);
@@ -161,6 +176,7 @@ WorkerPool::WorkerPool(nvinfer1::ICudaEngine& engine,
     CUDA_CHECK(cudaSetDevice(device_id_));
 
     // 每个worker独占一个context和stream，避免并发使用同一执行上下文。
+    // 必须在当前设备上创建，channel内部的显存分配和地址绑定都依赖它。
     channels_.reserve(static_cast<size_t>(workers));
     for (int i = 0; i < workers; ++i)
     {
@@ -169,6 +185,7 @@ WorkerPool::WorkerPool(nvinfer1::ICudaEngine& engine,
 
     try
     {
+        // 全部channel就绪后再启动线程，避免worker访问尚未绑定的缓冲区。
         threads_.reserve(workers);
         for (int i = 0; i < workers; ++i)
         {
@@ -189,6 +206,7 @@ WorkerPool::~WorkerPool()
 
 std::future<std::vector<float>> WorkerPool::submit(cv::Mat input)
 {
+    // 按值接收：调用方丢弃自己的头部，入队时再深拷贝数据。
     checkInput(input.type(), input.isContinuous(), input.total());
     auto task = std::make_unique<Task>();
     task->owned = std::move(input);
@@ -206,6 +224,7 @@ std::future<std::vector<float>> WorkerPool::submit(cv::cuda::GpuMat input)
 
 std::future<std::vector<float>> WorkerPool::submitBorrowed(const cv::Mat& input)
 {
+    // 借用路径只拷头部，省掉一次大块内存复制；代价是调用方必须保证数据活到future完成。
     checkInput(input.type(), input.isContinuous(), input.total());
     auto task = std::make_unique<Task>();
     task->owned = input;
@@ -234,6 +253,7 @@ void WorkerPool::checkInput(int type, bool continuous, size_t elements) const
 
 void WorkerPool::shutdown()
 {
+    // 先置位再唤醒：worker看到close后处理完剩余任务才退出，不会丢弃已入队的future。
     {
         std::lock_guard<std::mutex> lk(mutex_);
         close_ = true;
@@ -294,6 +314,7 @@ std::future<std::vector<float>> WorkerPool::enqueue(std::unique_ptr<Task> task)
 
 void WorkerPool::loop(size_t index)
 {
+    // cudaSetDevice只影响当前线程，必须在每个worker线程内单独设置一次。
     const auto device_status = cudaSetDevice(device_id_);
     Channel* channel = (device_status == cudaSuccess) ? channels_[index].get() : nullptr;
 
@@ -343,6 +364,8 @@ void WorkerPool::loop(size_t index)
 std::vector<float> WorkerPool::runOnChannel(Channel& ch, const cv::Mat& input)
 {
     checkInput(input.type(), input.isContinuous(), input.total());
+
+    // 先复制到锁页内存再异步上传：直接传pageable的Mat指针会退化为同步拷贝。
     std::memcpy(ch.h_in, input.data, info_.in_bytes);
     CUDA_CHECK(cudaMemcpyAsync(ch.d_in, ch.h_in, info_.in_bytes,
                                cudaMemcpyHostToDevice, ch.stream));
@@ -353,6 +376,8 @@ std::vector<float> WorkerPool::runOnChannel(Channel& ch, const cv::cuda::GpuMat&
 {
     checkInput(input.type(), input.isContinuous(),
                static_cast<size_t>(input.rows) * static_cast<size_t>(input.cols));
+
+    // 输入已在显存中，直接做D2D拷贝；跨设备时这里直接拒绝，不做隐式迁移。
     cudaPointerAttributes attributes{};
     CUDA_CHECK(cudaPointerGetAttributes(&attributes, input.data));
     if (attributes.device != device_id_)
@@ -365,12 +390,15 @@ std::vector<float> WorkerPool::runOnChannel(Channel& ch, const cv::cuda::GpuMat&
 
 std::vector<float> WorkerPool::inferBound(Channel& ch)
 {
+    // 推理、回拷和完成事件都挂在同一条stream上，顺序由stream本身保证。
     if (!ch.context->enqueueV3(ch.stream))
         throw std::runtime_error("TensorRT enqueue失败！");
 
     CUDA_CHECK(cudaMemcpyAsync(ch.h_out, ch.d_out, info_.out_bytes,
                                cudaMemcpyDeviceToHost, ch.stream));
     CUDA_CHECK(cudaEventRecord(ch.done, ch.stream));
+
+    // 等待事件而不是整条stream，语义上只同步到本次推理结束。
     CUDA_CHECK(cudaEventSynchronize(ch.done));
 
     std::vector<float> output(info_.out_elements);
@@ -392,12 +420,17 @@ TensorRT::TensorRT(const setting::InferenceConfig& config)
     const std::string extension = model_path.extension().string();
     const bool is_onnx = extension == ".onnx" || extension == ".ONNX";
     std::vector<char> engine_data;
+
+    // ONNX走“优先读缓存、缺失或过期再构建”的路径；其余扩展名一律按已序列化的engine读取。
     if (is_onnx)
     {
         std::filesystem::path cache_path = model_path;
         cache_path.replace_extension(".engine");
 
         std::error_code ec;
+
+        // 缓存文件名固定为同名.engine；仅当它存在且不早于ONNX时复用，
+        // 避免ONNX更新后误用旧engine。
         const bool cache_valid = 
             std::filesystem::is_regular_file(cache_path, ec) &&
             std::filesystem::last_write_time(cache_path, ec) >=
@@ -410,6 +443,7 @@ TensorRT::TensorRT(const setting::InferenceConfig& config)
 
         else 
         {
+            // 构建可能耗时几十秒到几分钟，会阻塞构造；缓存命中时只需反序列化。
             std::cout << "从 ONNX 构建 TensorRT engine:" << model_path << std::endl;
             engine_data = buildEngine(model_path.string(), cache_path.string());
             writeBinaryFile(cache_path, engine_data.data(), engine_data.size());
@@ -431,6 +465,8 @@ TensorRT::TensorRT(const setting::InferenceConfig& config)
 
     IOInfo info;
     info.InspectEngine(*engine_);
+
+    // 工作池持有engine引用，因此engine_先于它创建、后于它销毁。
     worker_pool_ = std::make_unique<WorkerPool>(
         *engine_, info, static_cast<int>(config_.worker),
         static_cast<size_t>(config_.capacity), config_.tensorrt.device_id);
@@ -451,22 +487,26 @@ TensorRT::~TensorRT()
 
 std::vector<float> TensorRT::infer(const cv::Mat& input)
 {
+    // 同步接口走借用路径，省掉一次整帧深拷贝；借用只在本次调用期间有效。
     return worker_pool_->submitBorrowed(input).get();
 }
 
 std::vector<float> TensorRT::infer(const cv::cuda::GpuMat& input)
 {
+    // 借用GpuMat头部，显存内容由worker在channel stream上直接读取。
     return worker_pool_->submitBorrowed(input).get();
 }
 
 std::future<std::vector<float>> TensorRT::inferAsync(const cv::Mat& input)
 {
+    // Mat的clone是纯主机内存复制，不涉及设备切换，可直接交给submit。
     return worker_pool_->submit(input);
 }
 
 std::future<std::vector<float>> TensorRT::inferAsync(const cv::cuda::GpuMat& input)
 {
     // 深拷贝发生在提交线程，不能依赖worker线程的cudaSetDevice。
+    // 这里临时切到目标设备完成GpuMat拷贝，返回前恢复调用方原来的设备。
     int previous_device = 0;
     CUDA_CHECK(cudaGetDevice(&previous_device));
     CUDA_CHECK(cudaSetDevice(config_.tensorrt.device_id));
@@ -489,6 +529,7 @@ std::future<std::vector<float>> TensorRT::inferAsync(const cv::cuda::GpuMat& inp
 
 std::vector<char> TensorRT::readEngine(const std::string& engine_path)
 {
+    // 以ate模式打开，一次拿到文件长度后直接分配，避免逐块读取。
     std::ifstream file(engine_path, std::ios::binary | std::ios::ate);
     if (!file) throw std::runtime_error("Engine 文件打开失败: " + engine_path);
     auto end = file.tellg();
@@ -514,11 +555,14 @@ std::vector<char> TensorRT::readEngine(const std::string& engine_path)
 std::vector<char> TensorRT::buildEngine(const std::string& onnx_path, const std::string& engine_path)
 {
     // 构建期资源在返回前释放，TensorRT对象只保留运行期资源。
+    // engine_path只用于日志；实际写文件由构造函数的writeBinaryFile完成。
     auto builder = std::unique_ptr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(logger_));
     if (!builder) throw std::runtime_error("builder创建失败！");
 
     auto network = std::unique_ptr<nvinfer1::INetworkDefinition>(builder->createNetworkV2(0));
     if (!network) throw std::runtime_error("network创建失败！");
+
+    // 传入0表示不启用显式batch维度，batch由网络输入张量自身的第一维表达。
 
     auto parser = std::unique_ptr<nvonnxparser::IParser>(nvonnxparser::createParser(*network, logger_));
     if (!parser) throw std::runtime_error("parser创建失败！");
@@ -548,6 +592,7 @@ std::vector<char> TensorRT::buildEngine(const std::string& onnx_path, const std:
 
 void TensorRT::writeBinaryFile(const std::string& path, const void *data, const std::size_t size)
 {
+    // ofstream的写入长度受streamsize限制，超限直接拒绝而不是截断。
     if (size > static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max()))
         throw std::runtime_error("Engine 文件过大！");
 
@@ -556,6 +601,8 @@ void TensorRT::writeBinaryFile(const std::string& path, const void *data, const 
 
     file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
     file.close();
+
+    // close之后才能可靠判断写入完整性（磁盘满、配额超限等）。
     if (!file) throw std::runtime_error("Engine 文件写入失败: " + path);
 
     std::cout << "Engine 文件保存成功: " << path << std::endl;
