@@ -15,8 +15,7 @@ pipeline:
     model_path: assets/armor_v8n_fp16.engine
     type: tensorrt
     mode: async
-    input_capacity: 1
-    result_capacity: 1
-    overflow: drop_oldest
+    capacity: 1
+    worker: 1
     tensorrt:
       device_id: 0

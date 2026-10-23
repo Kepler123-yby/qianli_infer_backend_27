@@ -35,9 +35,8 @@ struct InferenceConfig
     } openvino;
 
     InferMode mode = InferMode::SYNC;
-    int input_capacity = 1;
-    int result_capacity = 1;
-    std::string overflow = "drop_oldest";
+    int capacity = 1;
+    int worker = 1;
 
     explicit InferenceConfig(const YAML::Node& config);
     InferenceConfig() = default;
