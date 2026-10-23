@@ -7,8 +7,8 @@ set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 # ============================================================================
 # 依赖开关与路径：每个依赖“检测到即编译”，可用后端全部编进同一个库，
-# 运行时由 YAML 的 deploy_way / preprocess_cuda / postprocess_cuda 选择，
-# 切换后端或 CUDA 只需改配置，不必重新编译。
+# 运行时由 YAML 的 pipeline.inference.type / pipeline.processing.preprocess.implementation 选择，
+# 切换后端或预处理 CUDA 只需改配置，不必重新编译；后处理固定使用 CPU。
 #   -DNNDEPLOYMENT_OPENCV_CUDA_DIR=<带CUDA的OpenCV cmake目录>  （也认同名环境变量）
 #   -DOpenCV_DIR=<OpenCV cmake 目录>  -DOPENVINO_DIR=<runtime/cmake>
 #   -DTENSORRT_ROOT=<TensorRT 根目录>
@@ -18,7 +18,7 @@ set(TENSORRT_ROOT "" CACHE PATH "TensorRT 安装根目录（含 include/ 与 lib
 set(NNDEPLOYMENT_OPENCV_CUDA_DIR "${NNDEPLOYMENT_OPENCV_CUDA_DIR}" CACHE PATH "带 CUDA 模块的 OpenCV cmake 目录（优先使用）")
 option(NNDEPLOYMENT_ENABLE_OPENVINO "检测到 OpenVINO 时编译该后端" ON)
 option(NNDEPLOYMENT_ENABLE_TENSORRT "检测到 TensorRT 时编译该后端" ON)
-option(NNDEPLOYMENT_ENABLE_OPENCV_CUDA "检测到 OpenCV CUDA 模块时启用预处理/后处理加速" ON)
+option(NNDEPLOYMENT_ENABLE_OPENCV_CUDA "检测到 OpenCV CUDA 模块时启用预处理加速" ON)
 
 # ---------------------------------------------------------------------------
 # 选择带 CUDA 的 OpenCV（必须在 find_package(OpenCV) 之前）
@@ -120,14 +120,14 @@ if(NNDEPLOYMENT_ENABLE_TENSORRT AND CUDAToolkit_FOUND)
 endif()
 
 # ---------------------------------------------------------------------------
-# OpenCV CUDA 加速（预处理/后处理）：检查 OpenCV 是否提供 CUDA 模块目标即可，
+# OpenCV CUDA 加速（预处理）：检查 OpenCV 是否提供 CUDA 模块目标即可，
 # 未启用时按原因给出对应的修复提示。
 # ---------------------------------------------------------------------------
 set(NNDEPLOYMENT_WITH_OPENCV_CUDA OFF)
 if(NNDEPLOYMENT_ENABLE_OPENCV_CUDA AND CUDAToolkit_FOUND AND TARGET opencv_cudawarping AND TARGET opencv_cudaarithm)
     enable_language(CUDA)
     set(NNDEPLOYMENT_WITH_OPENCV_CUDA ON)
-    message(STATUS "NNdeployment: 启用 OpenCV CUDA 预处理/后处理 (OpenCV ${OpenCV_VERSION} @ ${OpenCV_DIR})")
+    message(STATUS "NNdeployment: 启用 OpenCV CUDA 预处理 (OpenCV ${OpenCV_VERSION} @ ${OpenCV_DIR})")
 elseif(NOT NNDEPLOYMENT_ENABLE_OPENCV_CUDA)
     message(STATUS "NNdeployment: OpenCV CUDA 被手动关闭（-DNNDEPLOYMENT_ENABLE_OPENCV_CUDA=OFF）")
 elseif(NOT CUDAToolkit_FOUND)

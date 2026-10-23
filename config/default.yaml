@@ -6,9 +6,8 @@ pipeline:
       padding_color: [124, 124, 124]
       normalize_scale: 0.00392156862745098
 
-    postprocess:
+    postprocess: # 固定使用CPU
       decoder: yolo_v8
-      implementation: cuda
       confidence_threshold: 0.5
       nms_threshold: 0.45
 
