@@ -36,7 +36,7 @@ struct InferenceConfig
 
     InferMode mode = InferMode::SYNC;
     int capacity = 1;
-    int worker = 1;
+    size_t worker = 1;
 
     explicit InferenceConfig(const YAML::Node& config);
     InferenceConfig() = default;

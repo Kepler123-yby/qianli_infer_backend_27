@@ -40,7 +40,7 @@ InferenceConfig::InferenceConfig(const YAML::Node& config)
         throw std::invalid_argument("执行方式必须为同步或异步中的一种");
 
     // 队列配置
-    capacity = tools::readConfig<int>(config, "capacity", capacity);
+    capacity = tools::readConfig<size_t>(config, "capacity", capacity);
     worker = tools::readConfig<int>(config, "worker", worker);
 }
 
