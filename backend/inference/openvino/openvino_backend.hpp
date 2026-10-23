@@ -13,8 +13,7 @@
 #include <thread>
 #include <vector>
 
-#include "backend.hpp"
-#include "settings/pipeline_setting.hpp"
+#include "inference.hpp"
 
 namespace backend::inference
 {

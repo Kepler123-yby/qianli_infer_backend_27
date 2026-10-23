@@ -16,8 +16,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/core/cuda.hpp>
 
-#include "backend.hpp"
-#include "settings/pipeline_setting.hpp"
+#include "inference.hpp"
 
 namespace backend::inference
 {
