@@ -22,6 +22,7 @@ private:
     static constexpr int features = 22;
     static constexpr int anchors = 25200;
 
+private:
     /**
      * @brief 解析[1, 25200, 22]，每行依次为四点坐标、objectness logit、4色和9类分数。
      */
