@@ -12,6 +12,15 @@
 namespace backend::inference
 {
 
+// 用于被跳过的任务：仍返回有效且已就绪的future，调用方无需异常分支。
+inline std::future<std::vector<float>> emptyInferenceFuture()
+{
+    std::promise<std::vector<float>> promise;
+    auto future = promise.get_future();
+    promise.set_value({});
+    return future;
+}
+
 /**
  * @brief 与具体后端无关的推理接口
  *
@@ -37,9 +46,7 @@ public:
      * @brief 按config.type创建对应的推理后端
      *
      * @param config 推理配置
-     * @throws std::invalid_argument 后端类型或队列参数非法
-     * @throws std::runtime_error 模型加载、engine构建或执行资源创建失败，
-     *         或当前构建未编译所选后端
+     * @note 初始化失败只记录日志，对象保留未就绪状态，后续调用直接返回空结果
      */
     explicit Inference(const setting::InferenceConfig& config);
     ~Inference();
@@ -53,7 +60,7 @@ public:
      * @brief 同步推理，返回前等待结果
      *
      * @param input 预处理后的连续、单通道FP32 NCHW数据
-     * @throws std::runtime_error 输入尺寸不符或推理失败
+     * @return 正常输出；输入校验或worker执行失败时记录error并返回空数组，调用方应跳过该帧
      * @note OpenVINO会把输入复制到请求缓冲；TensorRT的Mat路径需读取输入直到完成，
      *       其GpuMat路径要求输入位于配置设备且生产流已完成。
      */
@@ -64,7 +71,7 @@ public:
      * @brief 异步推理，返回future
      *
      * @param input 预处理后的连续、单通道FP32 NCHW数据
-     * @throws std::runtime_error 提交阶段错误；执行阶段错误由future.get()抛出
+     * @return 输入校验失败、队列关闭或worker执行失败时记录error，future.get()返回空数组
      * @note 返回前完成输入复制，之后调用方可复用输入；队列满时提交仍会等待。
      */
     std::future<std::vector<float>> inferAsync(const cv::Mat& input);
