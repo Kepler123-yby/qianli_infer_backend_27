@@ -22,7 +22,7 @@ enum class InferMode : int
 struct InferenceConfig
 {
     std::string model_path;
-    InferBackend type;
+    InferBackend type = InferBackend::TENSORRT;
 
     struct TensorRTConfig
     {
