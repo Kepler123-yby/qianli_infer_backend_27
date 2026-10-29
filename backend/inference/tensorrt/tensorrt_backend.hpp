@@ -21,7 +21,8 @@
 namespace backend::inference
 {
 
-void checkCuda(cudaError_t status, const char* call);
+// 返回false时已记录具体CUDA错误，调用方直接跳过即可。
+bool checkCuda(cudaError_t status, const char* call);
 
 #define CUDA_CHECK(call) checkCuda((call), #call)
 
@@ -35,32 +36,20 @@ struct IOInfo
 {
     // 输入输出名
     std::string input, output;
-    
-    // 输入输出元素数
-    size_t in_elements = 0, out_elements = 0;
 
-    // 输入输出字节数
+    // 输入输出元素数和字节数
+    size_t in_elements = 0, out_elements = 0;
     size_t in_bytes = 0, out_bytes = 0;
 
     /**
      * @brief 读取engine的输入输出名称、元素数和字节数，不创建context
-     *
-     * @param engine 已反序列化的engine
-     * @throws std::runtime_error 非单输入单输出、动态形状或不支持的数据格式
-     * @note 当前支持静态形状、线性布局的FP32和FP16张量。
+     * @return 不支持的网络或格式返回false，具体原因写入日志
      */
-    void InspectEngine(const nvinfer1::ICudaEngine& engine);
+    bool InspectEngine(const nvinfer1::ICudaEngine& engine);
 
 private:
-    /**
-     * @brief 将静态张量各维度相乘，得到元素总数
-     */
     size_t calculateElements(const nvinfer1::Dims& shape);
-
-    /**
-     * @brief 按张量实际数据类型计算字节数，与engine内部计算精度无关
-     */
-    size_t calculateBytes(const size_t elements, const nvinfer1::DataType type);
+    size_t calculateBytes(size_t elements, nvinfer1::DataType type);
 };
 
 struct Channel
@@ -79,76 +68,79 @@ struct Channel
 
     /**
      * @brief 创建执行context、stream、完成事件和输入输出缓冲，并绑定张量地址
-     *
-     * @param engine channel使用的engine，生命周期必须覆盖channel
-     * @param info 通过InspectEngine得到的输入输出信息
-     * @throws std::runtime_error context创建、CUDA资源分配或张量绑定失败
-     * @note 在engine对应的CUDA设备上创建和销毁channel。
+     * @note 任一步失败时记录日志并保持未就绪，由析构函数回收已分配资源
      */
     Channel(nvinfer1::ICudaEngine& engine, const IOInfo& info);
-
-    /**
-     * @brief 等待当前stream完成，再释放执行资源和缓冲区
-     */
+    Channel() = default;
     ~Channel();
+
+    bool ready() const { return ready_; }
 
 private:
     void release() noexcept;
+
+    bool ready_ = false;
 };
 
 struct Task
 {
     using Input = std::variant<cv::Mat, cv::cuda::GpuMat>;
-    Input owned;                              // 保存Mat/GpuMat头部；非借用任务在enqueue时深拷贝
+
+    Input owned;                             // 保存Mat/GpuMat头部；非借用任务在enqueue时深拷贝
     bool borrowed = false;                   // 借用任务共享数据，不执行深拷贝
     std::promise<std::vector<float>> promise;
-    
+
     const Input& input() const { return owned; }
 };
 
 class WorkerPool
 {
 public:
-    WorkerPool() = delete;
-    WorkerPool( nvinfer1::ICudaEngine& engine,
-                const IOInfo& info, 
-                int workers,
-                size_t capacity,
-                int deviceId);
-                
-    
+    WorkerPool(nvinfer1::ICudaEngine& engine,
+               const IOInfo& info,
+               int workers,
+               size_t capacity,
+               int deviceId);
+
     WorkerPool(const WorkerPool&) = delete;
-    WorkerPool& operator = (const WorkerPool&) = delete;
+    WorkerPool& operator=(const WorkerPool&) = delete;
 
     ~WorkerPool();
+
+    bool ready() const { return ready_; }
 
     // 深拷贝输入后入队；GpuMat须位于池所在设备，调用线程也须在该设备且生产流已完成。
     std::future<std::vector<float>> submit(cv::Mat input);
     std::future<std::vector<float>> submit(cv::cuda::GpuMat input);
 
     // 仅浅拷贝头部；future完成前不得修改共享数据，外部管理的底层内存必须保持有效。
-    // GpuMat须位于池所在设备，且提交前生产流已完成。
     std::future<std::vector<float>> submitBorrowed(const cv::Mat& input);
     std::future<std::vector<float>> submitBorrowed(const cv::cuda::GpuMat& input);
 
 private:
-    void checkInput(int type, bool continuous, size_t elements) const;
+    WorkerPool() = default;
+
+    bool checkInput(int type, bool continuous, size_t elements) const;
 
     void shutdown();
 
-    Task::Input cloneInput(const Task::Input& input);
+    void cloneInput(Task& task);
+    static Task::Input cloneInput(const cv::Mat& input);
+    static Task::Input cloneInput(const cv::cuda::GpuMat& input);
     std::future<std::vector<float>> enqueue(std::unique_ptr<Task> task);
-    
+
     void loop(size_t index);
 
     // 输入为已完成预处理的连续FP32 NCHW数据；GpuMat必须在本设备且生产流已完成。
     std::vector<float> runOnChannel(Channel& ch, const cv::Mat& input);
     std::vector<float> runOnChannel(Channel& ch, const cv::cuda::GpuMat& input);
     std::vector<float> inferBound(Channel& ch);
+
 private:
     IOInfo info_;
-    size_t capacity_;
-    int device_id_;
+    size_t capacity_ = 1;
+    int device_id_ = 0;
+    bool ready_ = false;
 
     std::vector<std::unique_ptr<Channel>> channels_;
     std::vector<std::thread> threads_;
@@ -173,8 +165,7 @@ public:
     std::vector<float> infer(const cv::cuda::GpuMat& input) override;
 
     // 返回前完成深拷贝，之后调用方可复用输入；队列满时提交仍会阻塞。
-    // 提交阶段错误直接抛出，执行阶段错误由future.get()抛出。
-    // 接口选择决定同步/异步行为，不读取config.mode；析构会等待已入队任务完成。
+    // 任一阶段失败都记录日志并返回空结果，不中断下一帧。
     std::future<std::vector<float>> inferAsync(const cv::Mat& input) override;
     std::future<std::vector<float>> inferAsync(const cv::cuda::GpuMat& input) override;
 
@@ -193,28 +184,18 @@ private:
     // 声明在engine之后，确保工作池先销毁，再释放engine和runtime。
     std::unique_ptr<WorkerPool> worker_pool_;
 
+    bool ready_ = false;
+
 private:
     std::vector<char> readEngine(const std::string& engine_path);
 
     /**
      * @brief 解析ONNX模型并构建序列化engine，不创建执行context
-     *
-     * @param onnx_path ONNX模型路径
-     * @param engine_path engine目标路径，用于日志，文件由调用方写入
-     * @return 序列化engine数据
-     * @throws std::runtime_error TensorRT对象创建、ONNX解析或engine构建失败
+     * @return 序列化engine数据；失败时记录日志并返回空数组
      */
     std::vector<char> buildEngine(const std::string& onnx_path, const std::string& engine_path);
 
-    /**
-     * @brief 将二进制数据写入文件，覆盖已有内容
-     *
-     * @param path 输出文件路径
-     * @param data 数据起始地址
-     * @param size 数据字节数
-     * @throws std::runtime_error 数据过大、文件打开或写入失败
-     */
-    void writeBinaryFile(const std::string& path, const void *data, const std::size_t size);
+    void writeBinaryFile(const std::string& path, const void* data, size_t size);
 };
 
 } // namespace backend::inference
