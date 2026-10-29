@@ -7,6 +7,29 @@
 namespace backend::setting
 {
 
+struct ResizePadding
+{
+    double resize_scale;
+    int padding_left;
+    int padding_right;
+    int padding_top;
+    int padding_bottom;
+
+    /**
+     * @brief 计算缩放和填充像素值
+     * 
+     * @param target_width 目标的宽
+     * @param target_height 目标的长
+     * @param current_width 当前宽
+     * @param current_height 当前长
+     * @param use_center_padding 是否居中填充
+     */
+    void calculateParam(const int target_width, const int target_height,
+                        const int current_width, const int current_height,
+                        const bool use_center_padding);
+};
+
+
 struct PreprocessConfig
 {
     // cuda相关配置

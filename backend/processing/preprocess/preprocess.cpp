@@ -31,22 +31,7 @@ PreprocessOutput PreCPU::process(const cv::Mat& img)
     return HWC2NCHW(rgb_img);
 }
 
-void ResizePadding::calculateParam(const int target_width, const int target_height,
-                                   const int current_width, const int current_height,
-                                   const bool use_center_padding)
-{
-    resize_scale = std::min(static_cast<double>(target_width) / current_width,
-                            static_cast<double>(target_height) / current_height);
-    const int resized_width = std::max(1, cvRound(current_width * resize_scale));
-    const int resized_height = std::max(1, cvRound(current_height * resize_scale));
-
-    padding_left = use_center_padding ? (target_width - resized_width) / 2 : 0;
-    padding_right = target_width - resized_width - padding_left;
-    padding_top = use_center_padding ? (target_height - resized_height) / 2 : 0;
-    padding_bottom = target_height - resized_height - padding_top;
-}
-
-cv::Mat PreCPU::resizeAndPad(const cv::Mat& img, const ResizePadding& params)
+cv::Mat PreCPU::resizeAndPad(const cv::Mat& img, const setting::ResizePadding& params)
 {
     // 等比例缩放
     const int resized_width = config_.width - params.padding_left - params.padding_right;
