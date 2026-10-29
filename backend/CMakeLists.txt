@@ -43,7 +43,9 @@ if(NNDEPLOYMENT_ENABLE_OPENCV_CUDA)
     foreach(_nn_dir
         "$ENV{NNDEPLOYMENT_OPENCV_CUDA_DIR}" "${NNDEPLOYMENT_OPENCV_CUDA_DIR}" "${OpenCV_DIR}"
         /usr/local/lib/cmake/opencv4 /usr/local/lib/cmake/OpenCV /usr/lib/cmake/opencv4
-        /usr/lib/aarch64-linux-gnu/cmake/opencv4 /usr/lib/x86_64-linux-gnu/cmake/opencv4
+        /usr/lib/aarch64-linux-gnu/cmake/opConfig<double>(config, "normalize_scale", normalize_scale);
+    
+    // 填充颜色encv4 /usr/lib/x86_64-linux-gnu/cmake/opencv4
     )
         nn_opencv_dir_has_cuda("${_nn_dir}" _nn_has)
         if(_nn_dir AND _nn_has AND NOT _nn_cv_cuda_dir)
@@ -67,6 +69,7 @@ endif()
 # OpenCV 必需；模型配置用 YAML（与 qianli_vision 一致）；CUDA Toolkit 可选。
 find_package(OpenCV REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(spdlog REQUIRED)
 find_package(CUDAToolkit QUIET)
 
 # nvcc 不在 PATH 时（远程命令 / IDE / CI 的非登录 shell 常见）用 CUDAToolkit 的
