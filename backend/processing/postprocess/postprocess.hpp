@@ -26,9 +26,9 @@ public:
      * @param frame_count 输入端分配的帧号
      * @return 检测结果；无目标、参数无效或解码失败时返回空数组
      */
-    std::vector<types::YOLOResult> process(const std::vector<float>& output,
-                                           const setting::ResizePadding& rp_scale,
-                                           std::uint64_t frame_count);
+    types::DetectionResults process(const std::vector<float>& output,
+                                    const setting::ResizePadding& rp_scale,
+                                    std::uint64_t frame_count);
 
 private:
     setting::PostprocessConfig config_;

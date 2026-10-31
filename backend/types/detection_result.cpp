@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace backend::types
@@ -32,6 +33,13 @@ enum class TargetType : int
     BASE_TOP     = 8
 };
 
+enum class RuneType : int
+{
+    UNACTIVATED     = 0, // 未激活
+    SMALL_ACTIVATED = 1, // 小符已激活
+    LARGE_ACTIVATED = 2  // 大符已激活
+};
+
 struct YOLOResult
 {
     TargetColor color_{};
@@ -45,5 +53,18 @@ struct YOLOResult
     : color_(color), type_(type), points_2d_(std::move(points_2d)), frame_count_(frame_count)
     {}
 };
+
+/**
+ * @brief 符文检测结果：3类 + 5个关键点
+ */
+struct RuneResult
+{
+    cv::Point2d top, left, right, bottom, point_R;
+    RuneType class_id = RuneType::UNACTIVATED;
+};
+
+// 不同模型的输出结构不同，实际类型由配置的解码器决定。
+// 空结果统一为第一个分支的空数组，调用方先判空再取具体类型。
+using DetectionResults = std::variant<std::vector<YOLOResult>, std::vector<RuneResult>>;
 
 } // namespace backend::types

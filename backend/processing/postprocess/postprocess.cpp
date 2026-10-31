@@ -3,6 +3,7 @@
 
 #include "decode/armor_v5.cpp"
 #include "decode/armor_v8.cpp"
+#include "decode/rune_v8.cpp"
 
 namespace backend::processing
 {
@@ -11,9 +12,9 @@ PostBase::PostBase(const setting::PostprocessConfig& config) : config_(config)
 {
 }
 
-std::vector<types::YOLOResult> PostBase::process(const std::vector<float>& output,
-                                                 const setting::ResizePadding& rp_scale,
-                                                 std::uint64_t frame_count)
+types::DetectionResults PostBase::process(const std::vector<float>& output,
+                                          const setting::ResizePadding& rp_scale,
+                                          std::uint64_t frame_count)
 {
     // 解码器只保存配置和本帧缩放参数，构造代价很小，不需要跨帧缓存。
     if (config_.decoder == "yolo_v5")
@@ -25,6 +26,12 @@ std::vector<types::YOLOResult> PostBase::process(const std::vector<float>& outpu
     if (config_.decoder == "yolo_v8")
     {
         postprocess::ArmorV8 decoder(config_, rp_scale);
+        return decoder.postprocess(output, frame_count);
+    }
+
+    if (config_.decoder == "rune_v8")
+    {
+        postprocess::RuneV8 decoder(config_, rp_scale);
         return decoder.postprocess(output, frame_count);
     }
 

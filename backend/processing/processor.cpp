@@ -28,9 +28,9 @@ Processor::PreprocessResult Processor::preprocess(const cv::Mat& img)
     return result;
 }
 
-std::vector<types::YOLOResult> Processor::postprocess(const std::vector<float>& output,
-                                                      const setting::ResizePadding& rp_scale,
-                                                      std::uint64_t frame_count)
+types::DetectionResults Processor::postprocess(const std::vector<float>& output,
+                                               const setting::ResizePadding& rp_scale,
+                                               std::uint64_t frame_count)
 {
     return postprocess_->process(output, rp_scale, frame_count);
 }

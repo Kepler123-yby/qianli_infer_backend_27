@@ -35,8 +35,8 @@ public:
      * @param output 只读的推理输出
      * @param frame_count 输入端分配的帧号，异步完成顺序不影响该编号
      */
-    std::vector<types::YOLOResult> postprocess(const std::vector<float>& output,
-                                               std::uint64_t frame_count)
+    types::DetectionResults postprocess(const std::vector<float>& output,
+                                        std::uint64_t frame_count)
     {
         if (output.empty())
         {
@@ -45,7 +45,8 @@ public:
         }
 
         if (!(config_.confidence_threshold > 0.0 && config_.confidence_threshold < 1.0 &&
-              config_.nms_threshold >= 0.0 && config_.nms_threshold <= 1.0 &&
+              config_.nms_threshold >= 0.0 && std::isfinite(config_.nms_threshold) &&
+              (config_.decoder == "rune_v8" || config_.nms_threshold <= 1.0) &&
               rp_scale_.resize_scale > 0.0 && std::isfinite(rp_scale_.resize_scale)))
         {
             tools::logger()->error("[postprocess] 帧 {} 参数无效，confidence={}，nms={}，scale={}",
@@ -61,8 +62,8 @@ protected:
     setting::PostprocessConfig config_;
     setting::ResizePadding rp_scale_{};
 
-    virtual std::vector<types::YOLOResult> parser(const std::vector<float>& output,
-                                                  std::uint64_t frame_count) = 0;
+    virtual types::DetectionResults parser(const std::vector<float>& output,
+                                           std::uint64_t frame_count) = 0;
 };
 
 } // namespace backend::postprocess

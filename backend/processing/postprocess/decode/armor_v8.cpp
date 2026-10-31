@@ -25,8 +25,8 @@ private:
     /**
      * @brief 解析[1, 21, 6300]，每列依次为4色和9类分数、四点坐标。
      */
-    std::vector<types::YOLOResult> parser(const std::vector<float>& output,
-                                          std::uint64_t frame_count) override
+    types::DetectionResults parser(const std::vector<float>& output,
+                                   std::uint64_t frame_count) override
     {
         if (output.size() != features * anchors)
         {
@@ -35,10 +35,11 @@ private:
             return {};
         }
 
+        const auto base = output.data();
         Candidates candidates;
         int invalid_count = 0;
 
-        if (!collectCandidates(output, frame_count, candidates, invalid_count))
+        if (!collectCandidates(base, frame_count, candidates, invalid_count))
         {
             tools::logger()->info("[postprocess] 帧 {} 未检测到目标，跳过后续操作", frame_count);
             return {};
@@ -54,7 +55,7 @@ private:
             return {};
         }
 
-        auto results = buildResults(output, candidates, keep_idxes, frame_count);
+        auto results = buildResults(base, candidates, keep_idxes, frame_count);
 
         tools::logger()->debug("[postprocess] 帧 {} 检测到{}个目标", frame_count, results.size());
 
@@ -65,11 +66,9 @@ private:
      * @brief 收集通过置信度检查的候选，并计算用于NMS的外接矩形
      * @return 至少有一个有效候选时返回true
      */
-    bool collectCandidates(const std::vector<float>& output, std::uint64_t frame_count,
+    bool collectCandidates(const float* base, std::uint64_t frame_count,
                            Candidates& candidates, int& invalid_count)
     {
-        const auto base = output.data();
-
         for (int i = 0; i < anchors; ++i)
         {
             // 没有objectness分支，检测分数取9类概率的最大值。
@@ -124,13 +123,11 @@ private:
     /**
      * @brief 对NMS保留的候选分类，并把四点还原到原图坐标
      */
-    std::vector<types::YOLOResult> buildResults(const std::vector<float>& output,
+    std::vector<types::YOLOResult> buildResults(const float* base,
                                                 const Candidates& candidates,
                                                 const std::vector<int>& keep_idxes,
                                                 std::uint64_t frame_count) const
     {
-        const auto base = output.data();
-
         std::vector<types::YOLOResult> results;
         results.reserve(keep_idxes.size());
 
@@ -186,9 +183,9 @@ private:
     /**
      * @brief 对当前output做处理，使[1, 6300, 21]按[1, 21, 6300]取值
      */
-    float at(const float* output_ptr, int feature, int anchor) const
+    float at(const float* base, int feature, int anchor) const
     {
-        return output_ptr[anchors * feature + anchor];
+        return base[anchors * feature + anchor];
     }
 
 };

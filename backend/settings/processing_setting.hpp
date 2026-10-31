@@ -56,7 +56,7 @@ struct PostprocessConfig
     // 后处理固定在CPU执行。
     std::string decoder = "yolo_v8";
     double confidence_threshold = 0.5;
-    double nms_threshold = 0.45; // IoU 阈值，不用于中心距离 NMS。
+    double nms_threshold = 0.45; // Armor使用IoU阈值；Rune使用原图像素距离。
 
     explicit PostprocessConfig(const YAML::Node& config);
     PostprocessConfig() = default;

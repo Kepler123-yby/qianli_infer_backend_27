@@ -26,8 +26,8 @@ private:
     /**
      * @brief 解析[1, 25200, 22]，每行依次为四点坐标、objectness logit、4色和9类分数。
      */
-    std::vector<types::YOLOResult> parser(const std::vector<float>& output,
-                                          std::uint64_t frame_count) override
+    types::DetectionResults parser(const std::vector<float>& output,
+                                   std::uint64_t frame_count) override
     {
         if (output.size() != features * anchors)
         {
