@@ -4,6 +4,7 @@
 #include <opencv2/core/cuda.hpp>
 
 #include <variant>
+#include <vector>
 
 #include "settings/processing_setting.hpp"
 
@@ -66,6 +67,12 @@ private:
     cv::cuda::GpuMat resizeAndPad(const cv::cuda::GpuMat& img);
     cv::cuda::GpuMat convertAndNormalize(const cv::cuda::GpuMat& img);
     cv::cuda::GpuMat HWC2NCHW(const cv::cuda::GpuMat& img);
+
+private:
+    cv::cuda::Stream stream_;
+    cv::cuda::HostMem host_img_;
+    cv::cuda::GpuMat gpu_img_, resized_img_, padded_img_, float_img_;
+    std::vector<cv::cuda::GpuMat> output_buffers_;
 };
 
 } // namespace processing
