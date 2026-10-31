@@ -36,6 +36,7 @@ struct IOInfo
 {
     // 输入输出名
     std::string input, output;
+    cv::Size input_size;
 
     // 输入输出元素数和字节数
     size_t in_elements = 0, out_elements = 0;
@@ -86,8 +87,8 @@ struct Task
 {
     using Input = std::variant<cv::Mat, cv::cuda::GpuMat>;
 
-    Input owned;                             // 保存Mat/GpuMat头部；非借用任务在enqueue时深拷贝
-    bool borrowed = false;                   // 借用任务共享数据，不执行深拷贝
+    Input owned;                             // 持有Mat/GpuMat头部，按clone_input决定是否复制
+    bool clone_input = true;                 // 常规异步任务复制输入；借用或接管时跳过
     std::promise<std::vector<float>> promise;
 
     const Input& input() const { return owned; }
@@ -112,6 +113,9 @@ public:
     // 深拷贝输入后入队；GpuMat须位于池所在设备，调用线程也须在该设备且生产流已完成。
     std::future<std::vector<float>> submit(cv::Mat input);
     std::future<std::vector<float>> submit(cv::cuda::GpuMat input);
+
+    // 接管独立的CUDA输入，任务持有到推理完成，不再执行快照。
+    std::future<std::vector<float>> submitOwned(cv::cuda::GpuMat&& input);
 
     // 仅浅拷贝头部；future完成前不得修改共享数据，外部管理的底层内存必须保持有效。
     std::future<std::vector<float>> submitBorrowed(const cv::Mat& input);
@@ -158,6 +162,8 @@ public:
     explicit TensorRT(const setting::InferenceConfig& config);
     ~TensorRT() override;
 
+    cv::Size inputSize() const override { return ready_ ? input_size_ : cv::Size{}; }
+
     // 两种接口均要求预处理后的连续、单通道FP32 NCHW数据，输出为CPU上的FP32数组。
     // GpuMat必须在配置的设备上，且提交前生产流已完成；本类不执行预处理。
     // 同步接口借用输入并等待完成，调用期间不得从其他线程修改输入。
@@ -168,6 +174,9 @@ public:
     // 任一阶段失败都记录日志并返回空结果，不中断下一帧。
     std::future<std::vector<float>> inferAsync(const cv::Mat& input) override;
     std::future<std::vector<float>> inferAsync(const cv::cuda::GpuMat& input) override;
+
+    // 接管输入，直到future完成前调用方不得修改其数据。
+    std::future<std::vector<float>> inferAsync(cv::cuda::GpuMat&& input) override;
 
     TensorRT(const TensorRT&) = delete;
     TensorRT& operator=(const TensorRT&) = delete;
@@ -184,6 +193,7 @@ private:
     // 声明在engine之后，确保工作池先销毁，再释放engine和runtime。
     std::unique_ptr<WorkerPool> worker_pool_;
 
+    cv::Size input_size_;
     bool ready_ = false;
 
 private:

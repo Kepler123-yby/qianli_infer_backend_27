@@ -44,6 +44,10 @@ public:
     OpenVINO(const OpenVINO&) = delete;
     OpenVINO& operator=(const OpenVINO&) = delete;
 
+    using Backend::inferAsync;
+
+    cv::Size inputSize() const override { return ready_ ? input_size_ : cv::Size{}; }
+
     /**
      * @brief 同步推理CPU输入
      *
@@ -154,6 +158,7 @@ private:
     ov::CompiledModel compiled_model_;
     std::vector<ov::InferRequest> requests_;
 
+    cv::Size input_size_;        ///< 模型输入宽高
     size_t in_elements_ = 0;      ///< 模型输入元素数
     size_t out_elements_ = 0;     ///< 模型输出元素数
     size_t capacity_ = 1;         ///< 任务队列容量

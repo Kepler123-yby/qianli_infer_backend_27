@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 #include <algorithm>
+#include <utility>
 
 namespace backend::inference
 {
@@ -42,6 +43,7 @@ bool IOInfo::InspectEngine(const nvinfer1::ICudaEngine& engine)
 
     input.clear();
     output.clear();
+    input_size = {};
     in_elements = out_elements = 0;
     in_bytes = out_bytes = 0;
 
@@ -55,13 +57,21 @@ bool IOInfo::InspectEngine(const nvinfer1::ICudaEngine& engine)
             return false;
         }
 
-        const auto elements = calculateElements(engine.getTensorShape(name));
+        const auto shape = engine.getTensorShape(name);
+        const auto elements = calculateElements(shape);
         const auto bytes = calculateBytes(elements, engine.getTensorDataType(name));
 
         if (elements == 0 || bytes == 0) return false;
 
         if (engine.getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT)
         {
+            if (shape.nbDims != 4 || shape.d[0] != 1 || shape.d[1] != 3)
+            {
+                tools::logger()->error("[tensorrt] 模型输入必须为[1, 3, H, W]");
+                return false;
+            }
+
+            input_size = cv::Size(static_cast<int>(shape.d[3]), static_cast<int>(shape.d[2]));
             input = name;
             in_elements = elements;
             in_bytes = bytes;
@@ -267,6 +277,26 @@ std::future<std::vector<float>> WorkerPool::submit(cv::cuda::GpuMat input)
     return enqueue(std::move(task));
 }
 
+std::future<std::vector<float>> WorkerPool::submitOwned(cv::cuda::GpuMat&& input)
+{
+    if (!ready_)
+    {
+        tools::logger()->error("[tensorrt] 推理后端未就绪，跳过本次任务");
+        return emptyInferenceFuture();
+    }
+
+    if (!checkInput(input.type(), input.isContinuous(),
+                    static_cast<size_t>(input.cols) * static_cast<size_t>(input.rows)))
+        return emptyInferenceFuture();
+
+    auto task = std::make_unique<Task>();
+    // GpuMat没有移动构造，用swap转移矩阵头和显存引用。
+    task->owned.emplace<cv::cuda::GpuMat>().swap(input);
+    task->clone_input = false;
+
+    return enqueue(std::move(task));
+}
+
 std::future<std::vector<float>> WorkerPool::submitBorrowed(const cv::Mat& input)
 {
     if (!ready_)
@@ -281,7 +311,7 @@ std::future<std::vector<float>> WorkerPool::submitBorrowed(const cv::Mat& input)
 
     auto task = std::make_unique<Task>();
     task->owned = input;
-    task->borrowed = true;
+    task->clone_input = false;
 
     return enqueue(std::move(task));
 }
@@ -300,7 +330,7 @@ std::future<std::vector<float>> WorkerPool::submitBorrowed(const cv::cuda::GpuMa
 
     auto task = std::make_unique<Task>();
     task->owned = input;
-    task->borrowed = true;
+    task->clone_input = false;
 
     return enqueue(std::move(task));
 }
@@ -334,8 +364,8 @@ void WorkerPool::shutdown()
 
 void WorkerPool::cloneInput(Task& task)
 {
-    // 借用任务共享调用方数据，不复制。
-    if (task.borrowed) return;
+    // 同步借用或异步接管的输入不再复制。
+    if (!task.clone_input) return;
 
     task.owned = std::visit([](const auto& input) -> Task::Input
     {
@@ -360,7 +390,7 @@ Task::Input WorkerPool::cloneInput(const cv::cuda::GpuMat& input)
 
 std::future<std::vector<float>> WorkerPool::enqueue(std::unique_ptr<Task> task)
 {
-    // 在调用线程完成快照，返回后调用方即可复用输入。
+    // 常规异步输入在调用线程完成快照，接管和借用路径跳过。
     cloneInput(*task);
 
     auto future = task->promise.get_future();
@@ -439,6 +469,13 @@ void WorkerPool::loop(size_t index)
 
 std::vector<float> WorkerPool::runOnChannel(Channel& ch, const cv::Mat& input)
 {
+    // 恢复CPU输入缓冲，上一帧可能直接绑定了外部显存。
+    if (!ch.context->setTensorAddress(info_.input.c_str(), ch.d_in))
+    {
+        tools::logger()->error("[tensorrt] 输入张量地址绑定失败");
+        return {};
+    }
+
     // 输入已在提交时校验，先复制到锁页内存再异步上传。
     std::memcpy(ch.h_in, input.data, info_.in_bytes);
 
@@ -451,7 +488,7 @@ std::vector<float> WorkerPool::runOnChannel(Channel& ch, const cv::Mat& input)
 
 std::vector<float> WorkerPool::runOnChannel(Channel& ch, const cv::cuda::GpuMat& input)
 {
-    // 输入已在显存中，直接做D2D拷贝；跨设备时这里直接拒绝，不做隐式迁移。
+    // 直接绑定输入显存，任务和调用方保证它存活到本次推理完成。
     cudaPointerAttributes attributes{};
     if (!CUDA_CHECK(cudaPointerGetAttributes(&attributes, input.data))) return {};
 
@@ -461,9 +498,11 @@ std::vector<float> WorkerPool::runOnChannel(Channel& ch, const cv::cuda::GpuMat&
         return {};
     }
 
-    if (!CUDA_CHECK(cudaMemcpyAsync(ch.d_in, input.data, info_.in_bytes,
-                                    cudaMemcpyDeviceToDevice, ch.stream)))
+    if (!ch.context->setTensorAddress(info_.input.c_str(), input.data))
+    {
+        tools::logger()->error("[tensorrt] 输入张量地址绑定失败");
         return {};
+    }
 
     return inferBound(ch);
 }
@@ -579,6 +618,7 @@ TensorRT::TensorRT(const setting::InferenceConfig& config)
 
     if (!worker_pool_->ready()) return;
 
+    input_size_ = info.input_size;
     ready_ = true;
     tools::logger()->info("[tensorrt] 后端就绪: device={}，输入{}个元素，输出{}个元素",
                          config_.tensorrt.device_id, info.in_elements, info.out_elements);
@@ -660,6 +700,18 @@ std::future<std::vector<float>> TensorRT::inferAsync(const cv::cuda::GpuMat& inp
     if (!CUDA_CHECK(cudaSetDevice(previous_device))) return emptyInferenceFuture();
 
     return future;
+}
+
+std::future<std::vector<float>> TensorRT::inferAsync(cv::cuda::GpuMat&& input)
+{
+    if (!ready_)
+    {
+        tools::logger()->error("[tensorrt] 推理后端未就绪，跳过本次任务");
+        return emptyInferenceFuture();
+    }
+
+    // 无需在提交线程分配或复制显存，设备检查由worker完成。
+    return worker_pool_->submitOwned(std::move(input));
 }
 
 std::vector<char> TensorRT::readEngine(const std::string& engine_path)

@@ -61,6 +61,14 @@ bool OpenVINO::initialize(const setting::InferenceConfig& config)
         return false;
     }
 
+    const auto input_shape = model->input().get_shape();
+    if (input_shape.size() != 4 || input_shape[0] != 1 || input_shape[1] != 3)
+    {
+        tools::logger()->error("[openvino] 模型输入必须为[1, 3, H, W]: {}", config.model_path);
+        return false;
+    }
+
+    input_size_ = cv::Size(static_cast<int>(input_shape[3]), static_cast<int>(input_shape[2]));
     compiled_model_ = core_.compile_model(model, config.openvino.device);
     in_elements_ = ov::shape_size(compiled_model_.input().get_shape());
     out_elements_ = ov::shape_size(compiled_model_.output().get_shape());
