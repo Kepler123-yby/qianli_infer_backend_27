@@ -31,10 +31,10 @@ public:
 
     Detector(const Detector&) = delete;
     Detector& operator=(const Detector&) = delete;
-    Detector(Detector&&) noexcept;
-    Detector &operator=(Detector &&) noexcept;
+    Detector(Detector&&) noexcept = default;
+    Detector &operator=(Detector &&) noexcept = default;
 
-    ~Detector();
+    ~Detector() = default;
 
     /**
      * @brief 同步处理一帧：预处理、推理、后处理
@@ -43,7 +43,7 @@ public:
      * @param frame_count 输入端分配的帧号
      * @return 检测结果；输入为空、推理失败或无目标时返回空数组
      */
-    std::vector<types::YOLOResult> detect(const cv::Mat& img, std::uint64_t frame_count);
+    types::DetectionResults detect(const cv::Mat& img, std::uint64_t frame_count);
 
     /**
      * @brief 提交一帧，预处理后立即返回，不等待推理完成
@@ -51,7 +51,7 @@ public:
      * @param img 原始图像，BGR
      * @param frame_count 输入端分配的帧号
      * @return 待收取的帧；输入为空时output无效，collect会直接跳过
-     * @note 推理输入在提交阶段完成深拷贝，返回后可以释放img
+     * @note 提交阶段完成输入快照或所有权转移，返回后可以释放img
      */
     PendingFrame submit(const cv::Mat& img, std::uint64_t frame_count);
 
@@ -61,7 +61,7 @@ public:
      * @param pending submit返回的待收取帧
      * @return 检测结果；future无效、推理失败或无目标时返回空数组
      */
-    std::vector<types::YOLOResult> collect(PendingFrame& pending);
+    types::DetectionResults collect(PendingFrame& pending);
 
 private:
     setting::PipelineConfig pipelineConfig_;
