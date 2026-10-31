@@ -32,11 +32,22 @@ class Backend
 public:
     virtual ~Backend() = default;
 
+    // 模型输入宽高；后端未就绪时返回空尺寸。
+    virtual cv::Size inputSize() const = 0;
+
     virtual std::vector<float> infer(const cv::Mat& input) = 0;
     virtual std::vector<float> infer(const cv::cuda::GpuMat& input) = 0;
 
     virtual std::future<std::vector<float>> inferAsync(const cv::Mat& input) = 0;
     virtual std::future<std::vector<float>> inferAsync(const cv::cuda::GpuMat& input) = 0;
+
+    // 支持接管CUDA输入的后端可省去快照，其余后端沿用原有复制路径。
+    virtual std::future<std::vector<float>> inferAsync(cv::cuda::GpuMat&& input)
+    {
+        auto future = inferAsync(input);
+        input.release();
+        return future;
+    }
 };
 
 class Inference
@@ -49,12 +60,17 @@ public:
      * @note 初始化失败只记录日志，对象保留未就绪状态，后续调用直接返回空结果
      */
     explicit Inference(const setting::InferenceConfig& config);
-    ~Inference();
+    ~Inference() = default;
 
     Inference(const Inference&) = delete;
     Inference& operator=(const Inference&) = delete;
-    Inference(Inference&&) noexcept;
-    Inference& operator=(Inference&&) noexcept;
+    Inference(Inference&&) noexcept = default;
+    Inference& operator=(Inference&&) noexcept = default;
+
+    /**
+     * @brief 模型输入宽高，未就绪时返回空尺寸
+     */
+    cv::Size inputSize() const;
 
     /**
      * @brief 同步推理，返回前等待结果
@@ -76,6 +92,11 @@ public:
      */
     std::future<std::vector<float>> inferAsync(const cv::Mat& input);
     std::future<std::vector<float>> inferAsync(const cv::cuda::GpuMat& input);
+
+    /**
+     * @brief 接管CUDA输入，调用方不再修改其数据，后端持有到推理完成
+     */
+    std::future<std::vector<float>> inferAsync(cv::cuda::GpuMat&& input);
 
     /**
      * @brief 配置中的执行模式，供上层决定调用infer还是inferAsync

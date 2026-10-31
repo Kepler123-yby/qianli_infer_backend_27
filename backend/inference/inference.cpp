@@ -2,6 +2,7 @@
 #include "tools/logger.hpp"
 
 #include <string>
+#include <utility>
 
 // 后端只在头文件可找到时参与编译；否则给出明确的运行时错误，而不是链接失败。
 // 注意这里只看头文件是否存在，具体是否链接对应库由构建系统负责。
@@ -56,11 +57,10 @@ Inference::Inference(const setting::InferenceConfig& config)
                          config_.type == setting::InferBackend::TENSORRT ? "TensorRT" : "OpenVINO");
 }
 
-Inference::~Inference() = default;
-
-Inference::Inference(Inference&&) noexcept = default;
-
-Inference& Inference::operator=(Inference&&) noexcept = default;
+cv::Size Inference::inputSize() const
+{
+    return backend_ ? backend_->inputSize() : cv::Size{};
+}
 
 std::vector<float> Inference::infer(const cv::Mat& input)
 {
@@ -104,6 +104,17 @@ std::future<std::vector<float>> Inference::inferAsync(const cv::cuda::GpuMat& in
     }
 
     return backend_->inferAsync(input);
+}
+
+std::future<std::vector<float>> Inference::inferAsync(cv::cuda::GpuMat&& input)
+{
+    if (!backend_)
+    {
+        tools::logger()->error("[inference] 推理后端未就绪，跳过本次任务");
+        return emptyInferenceFuture();
+    }
+
+    return backend_->inferAsync(std::move(input));
 }
 
 } // namespace backend::inference
