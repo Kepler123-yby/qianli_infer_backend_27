@@ -44,52 +44,20 @@ public:
     OpenVINO(const OpenVINO&) = delete;
     OpenVINO& operator=(const OpenVINO&) = delete;
 
-    using Backend::inferAsync;
-
     cv::Size inputSize() const override { return ready_ ? input_size_ : cv::Size{}; }
 
-    /**
-     * @brief 同步推理CPU输入
-     *
-     * @param input 连续、单通道FP32 NCHW数据，布局由预处理保证
-     * @return 模型输出；输入非法或推理失败时记录日志并返回空数组
-     * @note 借用Mat底层数据，调用返回前不得从其他线程修改或释放该内存。
-     */
-    std::vector<float> infer(const cv::Mat& input) override;
+    // 借用CPU/CUDA输入，future完成前调用方须保持底层数据有效且不修改。
+    std::future<std::vector<float>> submitBorrowed(const Input& input) override;
 
-    /**
-     * @brief 同步推理CUDA输入
-     *
-     * @param input 位于OpenVINO设备可见显存中的连续FP32 NCHW数据
-     * @return 模型输出；下载或推理失败时记录日志并返回空数组
-     * @note 先同步下载到主机内存，不是CUDA与OpenVINO设备之间的零拷贝。
-     *       调用线程须处于GpuMat所在CUDA设备，且提交前生产流已完成。
-     */
-    std::vector<float> infer(const cv::cuda::GpuMat& input) override;
-
-    /**
-     * @brief 异步推理CPU输入
-     *
-     * @param input 连续、单通道FP32 NCHW数据
-     * @return 提交成功时返回对应future；未就绪或输入非法时返回已就绪的空结果
-     * @note 返回前完成输入深拷贝，之后调用方可复用输入；队列满时提交会阻塞。
-     */
-    std::future<std::vector<float>> inferAsync(const cv::Mat& input) override;
-
-    /**
-     * @brief 异步推理CUDA输入
-     *
-     * @param input 位于CUDA显存中的连续FP32 NCHW数据
-     * @return 提交成功时返回对应future；未就绪、下载或输入非法时返回空结果
-     * @note 下载在调用线程同步完成，返回的future只覆盖排队与推理阶段。
-     */
-    std::future<std::vector<float>> inferAsync(const cv::cuda::GpuMat& input) override;
+    // 接管输入引用，不执行快照。CUDA输入仍需在调用线程下载到主机内存。
+    // 调用线程须处于GpuMat所在设备，且提交前生产流已完成。
+    std::future<std::vector<float>> submitOwned(Input&& input) override;
 
 private:
     OpenVINO() = default;
 
     /**
-     * @brief 单个待推理任务，保存输入快照和结果承诺
+     * @brief 单个待推理任务，持有主机输入和结果承诺
      */
     struct Task
     {
@@ -126,7 +94,7 @@ private:
     /**
      * @brief 将任务放入队列，等待空闲worker执行
      *
-     * @param input 已完成数据快照的输入
+     * @param input 主机输入，矩阵引用保留到任务完成
      * @return 任务结果的future；队列关闭时兑现空结果
      */
     std::future<std::vector<float>> enqueue(cv::Mat input);

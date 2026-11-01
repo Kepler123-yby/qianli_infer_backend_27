@@ -39,11 +39,8 @@ types::DetectionResults Detector::detect(const cv::Mat& img, std::uint64_t frame
     // 1. 预处理，同时拿到本帧的缩放和填充参数。
     auto input = processor_->preprocess(img);
 
-    // 2. 推理，CPU/CUDA张量由variant分派到对应重载。
-    auto output = std::visit([this](const auto& tensor)
-    {
-        return inference_->infer(tensor);
-    }, input.tensor);
+    // 2. 同步提交，返回的future已就绪。
+    auto output = inference_->submit(std::move(input.tensor), false).get();
 
     if (output.empty())
     {
@@ -76,11 +73,8 @@ Detector::PendingFrame Detector::submit(const cv::Mat& img, std::uint64_t frame_
     auto input = processor_->preprocess(img);
     pending.rp_scale = input.rp_scale;
 
-    // CPU输入完成快照；CUDA输入转移给后端，避免再次复制显存。
-    pending.output = std::visit([this](auto& tensor)
-    {
-        return inference_->inferAsync(std::move(tensor));
-    }, input.tensor);
+    // 统一转移CPU/CUDA输入引用，任务持有到推理完成，不再执行快照。
+    pending.output = inference_->submit(std::move(input.tensor), true);
 
     return pending;
 }

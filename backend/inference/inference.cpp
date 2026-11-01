@@ -62,29 +62,7 @@ cv::Size Inference::inputSize() const
     return backend_ ? backend_->inputSize() : cv::Size{};
 }
 
-std::vector<float> Inference::infer(const cv::Mat& input)
-{
-    if (!backend_)
-    {
-        tools::logger()->error("[inference] 推理后端未就绪，跳过本次任务");
-        return {};
-    }
-
-    return backend_->infer(input);
-}
-
-std::vector<float> Inference::infer(const cv::cuda::GpuMat& input)
-{
-    if (!backend_)
-    {
-        tools::logger()->error("[inference] 推理后端未就绪，跳过本次任务");
-        return {};
-    }
-
-    return backend_->infer(input);
-}
-
-std::future<std::vector<float>> Inference::inferAsync(const cv::Mat& input)
+std::future<std::vector<float>> Inference::submit(Input input, bool async)
 {
     if (!backend_)
     {
@@ -92,29 +70,11 @@ std::future<std::vector<float>> Inference::inferAsync(const cv::Mat& input)
         return emptyInferenceFuture();
     }
 
-    return backend_->inferAsync(input);
-}
+    auto future = async ? backend_->submitOwned(std::move(input))
+                        : backend_->submitBorrowed(input);
+    if (!async) future.wait();
 
-std::future<std::vector<float>> Inference::inferAsync(const cv::cuda::GpuMat& input)
-{
-    if (!backend_)
-    {
-        tools::logger()->error("[inference] 推理后端未就绪，跳过本次任务");
-        return emptyInferenceFuture();
-    }
-
-    return backend_->inferAsync(input);
-}
-
-std::future<std::vector<float>> Inference::inferAsync(cv::cuda::GpuMat&& input)
-{
-    if (!backend_)
-    {
-        tools::logger()->error("[inference] 推理后端未就绪，跳过本次任务");
-        return emptyInferenceFuture();
-    }
-
-    return backend_->inferAsync(std::move(input));
+    return future;
 }
 
 } // namespace backend::inference

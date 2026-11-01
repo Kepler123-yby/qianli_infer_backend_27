@@ -8,6 +8,7 @@
 #include <cstring>
 #include <algorithm>
 #include <utility>
+#include <type_traits>
 
 namespace backend::inference
 {
@@ -242,7 +243,7 @@ WorkerPool::~WorkerPool()
     shutdown();
 }
 
-std::future<std::vector<float>> WorkerPool::submit(cv::Mat input)
+std::future<std::vector<float>> WorkerPool::submitBorrowed(const Input& input)
 {
     if (!ready_)
     {
@@ -250,16 +251,15 @@ std::future<std::vector<float>> WorkerPool::submit(cv::Mat input)
         return emptyInferenceFuture();
     }
 
-    if (!checkInput(input.type(), input.isContinuous(), input.total()))
-        return emptyInferenceFuture();
+    if (!checkInput(input)) return emptyInferenceFuture();
 
     auto task = std::make_unique<Task>();
-    task->owned = std::move(input);
+    task->input = input;
 
     return enqueue(std::move(task));
 }
 
-std::future<std::vector<float>> WorkerPool::submit(cv::cuda::GpuMat input)
+std::future<std::vector<float>> WorkerPool::submitOwned(Input&& input)
 {
     if (!ready_)
     {
@@ -267,82 +267,39 @@ std::future<std::vector<float>> WorkerPool::submit(cv::cuda::GpuMat input)
         return emptyInferenceFuture();
     }
 
-    if (!checkInput(input.type(), input.isContinuous(),
-                    static_cast<size_t>(input.cols) * static_cast<size_t>(input.rows)))
-        return emptyInferenceFuture();
+    if (!checkInput(input)) return emptyInferenceFuture();
 
     auto task = std::make_unique<Task>();
-    task->owned = std::move(input);
-
-    return enqueue(std::move(task));
-}
-
-std::future<std::vector<float>> WorkerPool::submitOwned(cv::cuda::GpuMat&& input)
-{
-    if (!ready_)
+    // GpuMat没有移动构造，显式swap矩阵头，保留原来的接管路径。
+    std::visit([&](auto& tensor)
     {
-        tools::logger()->error("[tensorrt] 推理后端未就绪，跳过本次任务");
-        return emptyInferenceFuture();
-    }
-
-    if (!checkInput(input.type(), input.isContinuous(),
-                    static_cast<size_t>(input.cols) * static_cast<size_t>(input.rows)))
-        return emptyInferenceFuture();
-
-    auto task = std::make_unique<Task>();
-    // GpuMat没有移动构造，用swap转移矩阵头和显存引用。
-    task->owned.emplace<cv::cuda::GpuMat>().swap(input);
-    task->clone_input = false;
+        using Tensor = std::decay_t<decltype(tensor)>;
+        if constexpr (std::is_same_v<Tensor, cv::cuda::GpuMat>)
+            task->input.emplace<Tensor>().swap(tensor);
+        else
+            task->input.emplace<Tensor>(std::move(tensor));
+    }, input);
 
     return enqueue(std::move(task));
 }
 
-std::future<std::vector<float>> WorkerPool::submitBorrowed(const cv::Mat& input)
+bool WorkerPool::checkInput(const Input& input) const
 {
-    if (!ready_)
+    return std::visit([this](const auto& tensor)
     {
-        tools::logger()->error("[tensorrt] 推理后端未就绪，跳过本次任务");
-        return emptyInferenceFuture();
-    }
+        size_t elements;
+        if constexpr (std::is_same_v<std::decay_t<decltype(tensor)>, cv::Mat>)
+            elements = tensor.total();
+        else
+            elements = static_cast<size_t>(tensor.rows) * static_cast<size_t>(tensor.cols);
 
-    // 借用路径只拷头部，省掉一次大块内存复制；调用方必须保证数据活到future完成。
-    if (!checkInput(input.type(), input.isContinuous(), input.total()))
-        return emptyInferenceFuture();
+        if (tensor.type() == CV_32FC1 && tensor.isContinuous() && elements == info_.in_elements)
+            return true;
 
-    auto task = std::make_unique<Task>();
-    task->owned = input;
-    task->clone_input = false;
-
-    return enqueue(std::move(task));
-}
-
-std::future<std::vector<float>> WorkerPool::submitBorrowed(const cv::cuda::GpuMat& input)
-{
-    if (!ready_)
-    {
-        tools::logger()->error("[tensorrt] 推理后端未就绪，跳过本次任务");
-        return emptyInferenceFuture();
-    }
-
-    if (!checkInput(input.type(), input.isContinuous(),
-                    static_cast<size_t>(input.cols) * static_cast<size_t>(input.rows)))
-        return emptyInferenceFuture();
-
-    auto task = std::make_unique<Task>();
-    task->owned = input;
-    task->clone_input = false;
-
-    return enqueue(std::move(task));
-}
-
-bool WorkerPool::checkInput(int type, bool continuous, size_t elements) const
-{
-    if (type == CV_32FC1 && continuous && elements == info_.in_elements) return true;
-
-    tools::logger()->error("[tensorrt] 输入应为连续FP32 NCHW数据，期望{}个元素，实际{}个，type={}，continuous={}",
-                          info_.in_elements, elements, type, continuous);
-
-    return false;
+        tools::logger()->error("[tensorrt] 输入应为连续FP32 NCHW数据，期望{}个元素，实际{}个，type={}，continuous={}",
+                              info_.in_elements, elements, tensor.type(), tensor.isContinuous());
+        return false;
+    }, input);
 }
 
 void WorkerPool::shutdown()
@@ -362,37 +319,8 @@ void WorkerPool::shutdown()
     }
 }
 
-void WorkerPool::cloneInput(Task& task)
-{
-    // 同步借用或异步接管的输入不再复制。
-    if (!task.clone_input) return;
-
-    task.owned = std::visit([](const auto& input) -> Task::Input
-    {
-        return cloneInput(input);
-    }, task.owned);
-}
-
-Task::Input WorkerPool::cloneInput(const cv::Mat& input)
-{
-    return input.clone();
-}
-
-Task::Input WorkerPool::cloneInput(const cv::cuda::GpuMat& input)
-{
-    // 普通GpuMat::clone可能使用带pitch的分配，显式保留连续布局。
-    cv::cuda::GpuMat copy;
-    cv::cuda::createContinuous(input.rows, input.cols, input.type(), copy);
-    input.copyTo(copy);
-
-    return copy;
-}
-
 std::future<std::vector<float>> WorkerPool::enqueue(std::unique_ptr<Task> task)
 {
-    // 常规异步输入在调用线程完成快照，接管和借用路径跳过。
-    cloneInput(*task);
-
     auto future = task->promise.get_future();
     {
         std::unique_lock<std::mutex> lk(mutex_);
@@ -454,7 +382,7 @@ void WorkerPool::loop(size_t index)
         auto output = std::visit([&](const auto& input)
         {
             return runOnChannel(*channel, input);
-        }, task->input());
+        }, task->input);
 
         if (output.empty())
         {
@@ -638,31 +566,7 @@ TensorRT::~TensorRT()
     if (restore_device) cudaSetDevice(previous_device);
 }
 
-std::vector<float> TensorRT::infer(const cv::Mat& input)
-{
-    if (!ready_)
-    {
-        tools::logger()->error("[tensorrt] 推理后端未就绪，跳过本次任务");
-        return {};
-    }
-
-    // 同步接口走借用路径，省掉一次整帧深拷贝；借用只在本次调用期间有效。
-    return worker_pool_->submitBorrowed(input).get();
-}
-
-std::vector<float> TensorRT::infer(const cv::cuda::GpuMat& input)
-{
-    if (!ready_)
-    {
-        tools::logger()->error("[tensorrt] 推理后端未就绪，跳过本次任务");
-        return {};
-    }
-
-    // 借用GpuMat头部，显存内容由worker在channel stream上直接读取。
-    return worker_pool_->submitBorrowed(input).get();
-}
-
-std::future<std::vector<float>> TensorRT::inferAsync(const cv::Mat& input)
+std::future<std::vector<float>> TensorRT::submitBorrowed(const Input& input)
 {
     if (!ready_)
     {
@@ -670,11 +574,10 @@ std::future<std::vector<float>> TensorRT::inferAsync(const cv::Mat& input)
         return emptyInferenceFuture();
     }
 
-    // Mat的clone是纯主机内存复制，不涉及设备切换，可直接交给submit。
-    return worker_pool_->submit(input);
+    return worker_pool_->submitBorrowed(input);
 }
 
-std::future<std::vector<float>> TensorRT::inferAsync(const cv::cuda::GpuMat& input)
+std::future<std::vector<float>> TensorRT::submitOwned(Input&& input)
 {
     if (!ready_)
     {
@@ -682,35 +585,6 @@ std::future<std::vector<float>> TensorRT::inferAsync(const cv::cuda::GpuMat& inp
         return emptyInferenceFuture();
     }
 
-    // 深拷贝发生在提交线程，不能依赖worker线程的cudaSetDevice。
-    // 这里临时切到目标设备完成GpuMat拷贝，返回前恢复调用方原来的设备。
-    int previous_device = 0;
-    if (!CUDA_CHECK(cudaGetDevice(&previous_device))) return emptyInferenceFuture();
-    if (!CUDA_CHECK(cudaSetDevice(config_.tensorrt.device_id))) return emptyInferenceFuture();
-
-    auto future = emptyInferenceFuture();
-
-    cudaPointerAttributes attributes{};
-    if (CUDA_CHECK(cudaPointerGetAttributes(&attributes, input.data)))
-    {
-        if (attributes.device == config_.tensorrt.device_id) future = worker_pool_->submit(input);
-        else tools::logger()->error("[tensorrt] GpuMat必须与TensorRT位于同一CUDA设备，跳过本次任务");
-    }
-
-    if (!CUDA_CHECK(cudaSetDevice(previous_device))) return emptyInferenceFuture();
-
-    return future;
-}
-
-std::future<std::vector<float>> TensorRT::inferAsync(cv::cuda::GpuMat&& input)
-{
-    if (!ready_)
-    {
-        tools::logger()->error("[tensorrt] 推理后端未就绪，跳过本次任务");
-        return emptyInferenceFuture();
-    }
-
-    // 无需在提交线程分配或复制显存，设备检查由worker完成。
     return worker_pool_->submitOwned(std::move(input));
 }
 

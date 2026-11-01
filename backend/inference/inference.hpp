@@ -5,12 +5,15 @@
 
 #include <future>
 #include <memory>
+#include <variant>
 #include <vector>
 
 #include "settings/pipeline_setting.hpp"
 
 namespace backend::inference
 {
+
+using Input = std::variant<cv::Mat, cv::cuda::GpuMat>;
 
 // 用于被跳过的任务：仍返回有效且已就绪的future，调用方无需异常分支。
 inline std::future<std::vector<float>> emptyInferenceFuture()
@@ -35,19 +38,11 @@ public:
     // 模型输入宽高；后端未就绪时返回空尺寸。
     virtual cv::Size inputSize() const = 0;
 
-    virtual std::vector<float> infer(const cv::Mat& input) = 0;
-    virtual std::vector<float> infer(const cv::cuda::GpuMat& input) = 0;
+    // 借用输入，调用方须保持数据有效且不修改，直到future完成。
+    virtual std::future<std::vector<float>> submitBorrowed(const Input& input) = 0;
 
-    virtual std::future<std::vector<float>> inferAsync(const cv::Mat& input) = 0;
-    virtual std::future<std::vector<float>> inferAsync(const cv::cuda::GpuMat& input) = 0;
-
-    // 支持接管CUDA输入的后端可省去快照，其余后端沿用原有复制路径。
-    virtual std::future<std::vector<float>> inferAsync(cv::cuda::GpuMat&& input)
-    {
-        auto future = inferAsync(input);
-        input.release();
-        return future;
-    }
+    // 接管矩阵引用，不复制数据，任务持有输入直到推理完成。
+    virtual std::future<std::vector<float>> submitOwned(Input&& input) = 0;
 };
 
 class Inference
@@ -73,33 +68,18 @@ public:
     cv::Size inputSize() const;
 
     /**
-     * @brief 同步推理，返回前等待结果
+     * @brief 统一提交CPU/CUDA输入，始终返回future
      *
      * @param input 预处理后的连续、单通道FP32 NCHW数据
-     * @return 正常输出；输入校验或worker执行失败时记录error并返回空数组，调用方应跳过该帧
-     * @note OpenVINO会把输入复制到请求缓冲；TensorRT的Mat路径需读取输入直到完成，
-     *       其GpuMat路径要求输入位于配置设备且生产流已完成。
+     * @param async 为false时借用输入并等待完成，为true时接管输入后返回
+     * @return 同步模式返回已就绪的future；输入非法或推理失败时get()返回空数组
+     * @note 异步输入须由矩阵持有底层内存，建议用std::move提交；不再自动深拷贝，
+     *       推理完成前不得通过其他别名修改数据。CUDA输入要求位于配置设备且生产流已完成。
      */
-    std::vector<float> infer(const cv::Mat& input);
-    std::vector<float> infer(const cv::cuda::GpuMat& input);
+    std::future<std::vector<float>> submit(Input input, bool async);
 
     /**
-     * @brief 异步推理，返回future
-     *
-     * @param input 预处理后的连续、单通道FP32 NCHW数据
-     * @return 输入校验失败、队列关闭或worker执行失败时记录error，future.get()返回空数组
-     * @note 返回前完成输入复制，之后调用方可复用输入；队列满时提交仍会等待。
-     */
-    std::future<std::vector<float>> inferAsync(const cv::Mat& input);
-    std::future<std::vector<float>> inferAsync(const cv::cuda::GpuMat& input);
-
-    /**
-     * @brief 接管CUDA输入，调用方不再修改其数据，后端持有到推理完成
-     */
-    std::future<std::vector<float>> inferAsync(cv::cuda::GpuMat&& input);
-
-    /**
-     * @brief 配置中的执行模式，供上层决定调用infer还是inferAsync
+     * @brief 配置中的执行模式，供上层选择submit的async参数
      */
     setting::InferMode mode() const { return config_.mode; }
 
@@ -110,7 +90,7 @@ public:
 
 private:
     setting::InferenceConfig config_;
-    // 指向具体后端；析构定义在源文件，避免上层包含TensorRT/OpenVINO头文件。
+    // 持有具体后端，避免上层包含TensorRT/OpenVINO头文件。
     std::unique_ptr<Backend> backend_;
 };
 

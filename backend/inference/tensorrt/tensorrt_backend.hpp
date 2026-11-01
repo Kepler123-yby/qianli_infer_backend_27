@@ -12,7 +12,6 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
-#include <variant>
 #include <opencv2/core.hpp>
 #include <opencv2/core/cuda.hpp>
 
@@ -85,13 +84,8 @@ private:
 
 struct Task
 {
-    using Input = std::variant<cv::Mat, cv::cuda::GpuMat>;
-
-    Input owned;                             // 持有Mat/GpuMat头部，按clone_input决定是否复制
-    bool clone_input = true;                 // 常规异步任务复制输入；借用或接管时跳过
+    Input input;                             // 持有CPU/CUDA矩阵引用，不执行数据快照
     std::promise<std::vector<float>> promise;
-
-    const Input& input() const { return owned; }
 };
 
 class WorkerPool
@@ -110,27 +104,19 @@ public:
 
     bool ready() const { return ready_; }
 
-    // 深拷贝输入后入队；GpuMat须位于池所在设备，调用线程也须在该设备且生产流已完成。
-    std::future<std::vector<float>> submit(cv::Mat input);
-    std::future<std::vector<float>> submit(cv::cuda::GpuMat input);
+    // 借用输入，调用方须保持底层内存有效且不修改，直到future完成。
+    std::future<std::vector<float>> submitBorrowed(const Input& input);
 
-    // 接管独立的CUDA输入，任务持有到推理完成，不再执行快照。
-    std::future<std::vector<float>> submitOwned(cv::cuda::GpuMat&& input);
-
-    // 仅浅拷贝头部；future完成前不得修改共享数据，外部管理的底层内存必须保持有效。
-    std::future<std::vector<float>> submitBorrowed(const cv::Mat& input);
-    std::future<std::vector<float>> submitBorrowed(const cv::cuda::GpuMat& input);
+    // 接管矩阵引用，任务持有到推理完成，不复制数据。
+    std::future<std::vector<float>> submitOwned(Input&& input);
 
 private:
     WorkerPool() = default;
 
-    bool checkInput(int type, bool continuous, size_t elements) const;
+    bool checkInput(const Input& input) const;
 
     void shutdown();
 
-    void cloneInput(Task& task);
-    static Task::Input cloneInput(const cv::Mat& input);
-    static Task::Input cloneInput(const cv::cuda::GpuMat& input);
     std::future<std::vector<float>> enqueue(std::unique_ptr<Task> task);
 
     void loop(size_t index);
@@ -164,19 +150,10 @@ public:
 
     cv::Size inputSize() const override { return ready_ ? input_size_ : cv::Size{}; }
 
-    // 两种接口均要求预处理后的连续、单通道FP32 NCHW数据，输出为CPU上的FP32数组。
-    // GpuMat必须在配置的设备上，且提交前生产流已完成；本类不执行预处理。
-    // 同步接口借用输入并等待完成，调用期间不得从其他线程修改输入。
-    std::vector<float> infer(const cv::Mat& input) override;
-    std::vector<float> infer(const cv::cuda::GpuMat& input) override;
-
-    // 返回前完成深拷贝，之后调用方可复用输入；队列满时提交仍会阻塞。
-    // 任一阶段失败都记录日志并返回空结果，不中断下一帧。
-    std::future<std::vector<float>> inferAsync(const cv::Mat& input) override;
-    std::future<std::vector<float>> inferAsync(const cv::cuda::GpuMat& input) override;
-
-    // 接管输入，直到future完成前调用方不得修改其数据。
-    std::future<std::vector<float>> inferAsync(cv::cuda::GpuMat&& input) override;
+    // 输入统一为连续FP32 NCHW数据，CUDA输入须位于配置设备且生产流已完成。
+    // CPU输入上传到channel缓冲，CUDA输入直接绑定显存，不在本类执行预处理。
+    std::future<std::vector<float>> submitBorrowed(const Input& input) override;
+    std::future<std::vector<float>> submitOwned(Input&& input) override;
 
     TensorRT(const TensorRT&) = delete;
     TensorRT& operator=(const TensorRT&) = delete;

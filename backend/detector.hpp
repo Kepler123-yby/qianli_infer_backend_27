@@ -51,7 +51,7 @@ public:
      * @param img 原始图像，BGR
      * @param frame_count 输入端分配的帧号
      * @return 待收取的帧；输入为空时output无效，collect会直接跳过
-     * @note 提交阶段完成输入快照或所有权转移，返回后可以释放img
+     * @note 预处理输出转移给推理任务，返回后可以释放img
      */
     PendingFrame submit(const cv::Mat& img, std::uint64_t frame_count);
 

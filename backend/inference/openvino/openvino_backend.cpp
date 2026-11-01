@@ -3,6 +3,7 @@
 
 #include <cstring>
 #include <utility>
+#include <type_traits>
 
 namespace backend::inference
 {
@@ -101,34 +102,14 @@ OpenVINO::~OpenVINO()
     shutdown();
 }
 
-std::vector<float> OpenVINO::infer(const cv::Mat& input)
+std::future<std::vector<float>> OpenVINO::submitBorrowed(const Input& input)
 {
-    if (!ready_)
-    {
-        tools::logger()->error("[openvino] 推理后端未就绪，跳过本次任务");
-        return {};
-    }
-
-    if (!checkInput(input.type(), input.isContinuous(), input.total())) return {};
-
-    return enqueue(input).get();
+    // 只复制矩阵头，CPU数据由调用方保证有效；CUDA数据下载后由任务持有。
+    Input borrowed = input;
+    return submitOwned(std::move(borrowed));
 }
 
-std::vector<float> OpenVINO::infer(const cv::cuda::GpuMat& input)
-{
-    if (!ready_)
-    {
-        tools::logger()->error("[openvino] 推理后端未就绪，跳过本次任务");
-        return {};
-    }
-
-    auto host_input = downloadInput(input);
-    if (host_input.empty()) return {};
-
-    return enqueue(std::move(host_input)).get();
-}
-
-std::future<std::vector<float>> OpenVINO::inferAsync(const cv::Mat& input)
+std::future<std::vector<float>> OpenVINO::submitOwned(Input&& input)
 {
     if (!ready_)
     {
@@ -136,23 +117,20 @@ std::future<std::vector<float>> OpenVINO::inferAsync(const cv::Mat& input)
         return emptyInferenceFuture();
     }
 
-    if (!checkInput(input.type(), input.isContinuous(), input.total()))
-        return emptyInferenceFuture();
-
-    // Mat值拷贝只复制头部；异步任务需要独立的数据快照。
-    return enqueue(input.clone());
-}
-
-std::future<std::vector<float>> OpenVINO::inferAsync(const cv::cuda::GpuMat& input)
-{
-    if (!ready_)
+    auto host_input = std::visit([this](auto& tensor) -> cv::Mat
     {
-        tools::logger()->error("[openvino] 推理后端未就绪，跳过本次任务");
-        return emptyInferenceFuture();
-    }
-
-    // download已经产生独立的主机缓冲，不再额外clone。
-    auto host_input = downloadInput(input);
+        if constexpr (std::is_same_v<std::decay_t<decltype(tensor)>, cv::Mat>)
+        {
+            if (!checkInput(tensor.type(), tensor.isContinuous(), tensor.total())) return {};
+            return std::move(tensor);
+        }
+        else
+        {
+            auto host_input = downloadInput(tensor);
+            tensor.release();
+            return host_input;
+        }
+    }, input);
     if (host_input.empty()) return emptyInferenceFuture();
 
     return enqueue(std::move(host_input));
