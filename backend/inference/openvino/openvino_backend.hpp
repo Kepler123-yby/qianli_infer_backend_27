@@ -43,6 +43,8 @@ public:
 
     OpenVINO(const OpenVINO&) = delete;
     OpenVINO& operator=(const OpenVINO&) = delete;
+    OpenVINO(OpenVINO&&) = delete;
+    OpenVINO& operator=(OpenVINO&&) = delete;
 
     cv::Size inputSize() const override { return ready_ ? input_size_ : cv::Size{}; }
 

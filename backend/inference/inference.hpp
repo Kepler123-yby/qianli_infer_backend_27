@@ -59,8 +59,8 @@ public:
 
     Inference(const Inference&) = delete;
     Inference& operator=(const Inference&) = delete;
-    Inference(Inference&&) noexcept = default;
-    Inference& operator=(Inference&&) noexcept = default;
+    Inference(Inference&&) noexcept = delete;
+    Inference& operator=(Inference&&) noexcept = delete;
 
     /**
      * @brief 模型输入宽高，未就绪时返回空尺寸

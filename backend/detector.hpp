@@ -31,8 +31,8 @@ public:
 
     Detector(const Detector&) = delete;
     Detector& operator=(const Detector&) = delete;
-    Detector(Detector&&) noexcept = default;
-    Detector &operator=(Detector &&) noexcept = default;
+    Detector(Detector&&) noexcept = delete;
+    Detector &operator=(Detector &&) noexcept = delete;
 
     ~Detector() = default;
 

@@ -99,6 +99,8 @@ public:
 
     WorkerPool(const WorkerPool&) = delete;
     WorkerPool& operator=(const WorkerPool&) = delete;
+    WorkerPool(WorkerPool&&) = delete;
+    WorkerPool& operator=(WorkerPool&&) = delete;
 
     ~WorkerPool();
 
@@ -157,6 +159,8 @@ public:
 
     TensorRT(const TensorRT&) = delete;
     TensorRT& operator=(const TensorRT&) = delete;
+    TensorRT(TensorRT&&) = delete;
+    TensorRT& operator=(TensorRT&&) = delete;
 
 private:
     Logger logger_;
