@@ -34,7 +34,7 @@ models/                          # 模型资源（原 asserts/）
 `settings/` 下文件统一使用 `*_setting` 命名；前后处理配置集中在
 `processing_setting.hpp/.cpp`，不再单独拆分预处理配置文件。
 
-上层直接通过 `config["键"]` 分发节点；`yaml_utils.hpp` 只保留 `readConfig()`，
+上层直接通过 `config["键"]` 分发节点；`yaml_utils.cpp` 只保留 `readConfig()`，
 键缺失或值为 `null` 时使用默认值，类型转换由 yaml-cpp 处理。
 模型路径不能为空；后端类型与执行模式沿用现有解析检查。
 当前仅接通配置传递，`decoder` 只记录解析器名称，尚未实现模型执行、YOLO 解码或异步队列。
