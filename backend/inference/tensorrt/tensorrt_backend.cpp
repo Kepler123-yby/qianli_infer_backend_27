@@ -1,6 +1,7 @@
 #include "tensorrt_backend.hpp"
 #include "tools/logger.hpp"
 
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -517,8 +518,15 @@ TensorRT::TensorRT(const setting::InferenceConfig& config)
 
     else
     {
-        engine_data = readEngine(model_path.string());
-        if (engine_data.empty()) return;
+        try
+        {
+            engine_data = readEngine(model_path.string());
+        }
+        catch (const std::exception& e)
+        {
+            tools::logger()->warn("[tensorrt] Engine读取异常: {}，{}", model_path.string(), e.what());
+        }
+        // 读取返回空数据或抛异常时，继续到同名ONNX回退路径。
     }
 
     // 加载执行资源；runtime必须比engine活得更久。
@@ -529,7 +537,47 @@ TensorRT::TensorRT(const setting::InferenceConfig& config)
         return;
     }
 
-    engine_.reset(runtime_->deserializeCudaEngine(engine_data.data(), engine_data.size()));
+    // TensorRT通常通过空指针报告反序列化失败，不能只依赖异常捕获。
+    const auto deserialize = [&]() {
+        if (engine_data.empty()) return;
+        try
+        {
+            engine_.reset(runtime_->deserializeCudaEngine(engine_data.data(), engine_data.size()));
+        }
+        catch (const std::exception& e)
+        {
+            tools::logger()->warn("[tensorrt] Engine反序列化异常: {}", e.what());
+        }
+    };
+    deserialize();
+
+    if (!engine_ && !is_onnx)
+    {
+        auto onnx_path = model_path;
+        onnx_path.replace_extension(".onnx");
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(onnx_path, ec))
+        {
+            tools::logger()->error("[tensorrt] Engine加载失败，且未找到同名ONNX: {}", onnx_path.string());
+            return;
+        }
+
+        tools::logger()->warn("[tensorrt] Engine加载失败，从同名ONNX重新构建: {}", onnx_path.string());
+        try
+        {
+            engine_data = buildEngine(onnx_path.string(), model_path.string());
+            deserialize();
+            // 重建结果加载成功后再替换旧文件。
+            if (engine_)
+                writeBinaryFile(model_path.string(), engine_data.data(), engine_data.size());
+        }
+        catch (const std::exception& e)
+        {
+            tools::logger()->error("[tensorrt] ONNX回退构建异常: {}，{}", onnx_path.string(), e.what());
+            return;
+        }
+    }
+
     if (!engine_)
     {
         tools::logger()->error("[tensorrt] Engine反序列化失败: {}", model_path.string());
@@ -660,6 +708,11 @@ std::vector<char> TensorRT::buildEngine(const std::string& onnx_path, const std:
         tools::logger()->error("[tensorrt] builder_config创建失败");
         return {};
     }
+
+    // FP16在构建时启用；反序列化沿用engine中已确定的精度。
+    // 输入输出类型保持模型定义，内部允许选择FP16计算。
+    builder_config->setFlag(nvinfer1::BuilderFlag::kFP16);
+    tools::logger()->info("[tensorrt] 构建精度: 启用FP16（允许FP32回退）");
 
     auto serialized_engine = std::unique_ptr<nvinfer1::IHostMemory>(
         builder->buildSerializedNetwork(*network, *builder_config));

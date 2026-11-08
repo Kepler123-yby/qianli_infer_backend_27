@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 project(qianli_infer_backend_27 LANGUAGES CXX)
 
-find_package(fmt REQUIRED)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_subdirectory(backend)
 
 add_executable(test_fps src/test_fps.cpp)
