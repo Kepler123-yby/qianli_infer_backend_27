@@ -15,7 +15,7 @@ pipeline:
     model_path: assets/armor_v8n_fp16.engine
     type: tensorrt
     mode: async
-    capacity: 8
-    worker: 8
+    capacity: 8   # task队列容量
+    worker: 8     # 工作线程数量
     tensorrt:
       device_id: 0
