@@ -207,14 +207,14 @@ target_link_libraries(target_project PRIVATE backend ...)
 **同步：**
 
 ```cpp
-Detector detector;
+Detector detector(config["pipeline"]);
 auto result = detector.detect(img, frame_count);
 ```
 
 **异步：**
 
 ```cpp
-Detector detector;
+Detector detector(config["pipeline"]);
 auto pending = detector.submit(img, frame_count);
 auto result = detector.collect();
 ```
