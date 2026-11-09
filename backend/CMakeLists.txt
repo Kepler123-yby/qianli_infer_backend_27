@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.28)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     project(backend LANGUAGES CXX)
@@ -70,7 +70,10 @@ if(QIANLI_ENABLE_OPENCV_CUDA)
 endif()
 
 # OpenCV 必需；模型配置用 YAML（与 qianli_vision 一致）；CUDA Toolkit 可选。
+cmake_policy(PUSH)
+cmake_policy(SET CMP0146 OLD)
 find_package(OpenCV REQUIRED)
+cmake_policy(POP)
 find_package(yaml-cpp REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(Threads REQUIRED)

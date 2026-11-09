@@ -30,6 +30,7 @@ const std::string keys =
     "{end_index    e  | 0                      | 结束帧（含），0表示视频末尾  }"
     "{queue_size   qs | 8                      | 队列长度                   }"
     "{display      d  | 0                      | 是否可视化,0:false; 1:true }"
+    "{print_video_fps | false                  | 打印解码加delay的平均输出FPS }"
     "{@input-path     | assets/video/装甲板.mp4  | 测试视频路径                }";
 
 double calculate_cost(
@@ -102,8 +103,8 @@ struct IMG
 class ImgQueue
 {
 public:
-    ImgQueue(const std::string& input_path, size_t queue_size)
-    : queue_size_(queue_size)
+    ImgQueue(const std::string& input_path, size_t queue_size, bool print_video_fps = false)
+    : queue_size_(queue_size), print_video_fps_(print_video_fps)
     {
         if (queue_size_ == 0)
             backend::tools::logger() -> error("数据队列长度不能为0！");
@@ -123,7 +124,14 @@ public:
             close_ = true;
         }
         conditional_.notify_all();
-        if (thread_.joinable()) thread_.join();
+        if (thread_.joinable())
+        {
+            thread_.join();
+            if (print_video_fps_ && decode_delay_seconds_ > 0.0)
+                backend::tools::logger()->info(
+                    "视频输出FPS（解码+delay，不含队列等待）: {:.2f}",
+                    decoded_frames_ / decode_delay_seconds_);
+        }
     }
 
     std::optional<IMG> get_IMG()
@@ -146,6 +154,9 @@ private:
     cv::VideoCapture video_;
     std::queue<IMG> queue_;
     size_t queue_size_;
+    bool print_video_fps_;
+    size_t decoded_frames_ = 0;
+    double decode_delay_seconds_ = 0.0;
     bool close_ = false;
 
     std::thread thread_;
@@ -166,6 +177,8 @@ private:
             }
 
             IMG img_;
+            auto start = print_video_fps_ ? std::chrono::steady_clock::now()
+                                         : std::chrono::steady_clock::time_point{};
             if (!video_.read(img_.img) || img_.img.empty())
             {
                 {
@@ -175,6 +188,9 @@ private:
                 conditional_.notify_all();
                 return;
             }
+            const double decode_seconds = print_video_fps_
+                ? std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count()
+                : 0.0;
             img_.frame_count = frame;
 
             {
@@ -183,7 +199,14 @@ private:
                 queue_.push(std::move(img_));
             }
             conditional_.notify_one();
+            if (print_video_fps_) start = std::chrono::steady_clock::now();
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (print_video_fps_)
+            {
+                decode_delay_seconds_ += decode_seconds + std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - start).count();
+                ++decoded_frames_;
+            }
         }
     }
 };
@@ -204,6 +227,7 @@ int main(int argc, char* argv[])
     auto end_index = cli.get<int>("end_index");
     auto queue_size = cli.get<size_t>("queue_size");
     auto display = cli.get<bool>("display");
+    auto print_video_fps = cli.get<bool>("print_video_fps");
 
     if (!cli.check())
     {
@@ -226,7 +250,7 @@ int main(int argc, char* argv[])
         return 1;
     }
     backend::Detector detector(pipeline);
-    ImgQueue img_queue(input_path, queue_size);
+    ImgQueue img_queue(input_path, queue_size, print_video_fps);
 
     backend::types::DetectionResults result;
     double inference_seconds = 0.0;
